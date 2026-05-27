@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sunlight: MRI brain w/wo contrast (CPT 70553)</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="page">
+    <header class="masthead">
+      <h1 class="title">Sunlight</h1>
+      <p class="tagline">A bill of materials for one medical procedure, built from public data.</p>
+    </header>
+
+    <section class="headline" id="headline">
+      <h2 id="headline-text">Loading…</h2>
+      <p class="caveat">CPT 70553 · MRI brain without and with contrast · facility/technical charge only (radiologist read excluded) · Public data with named assumptions, not audited figures.</p>
+    </section>
+
+    <section class="legend" id="legend"></section>
+
+    <section class="chart-wrap">
+      <svg id="chart" role="img" aria-label="Per-hospital cost vs. charge for CPT 70553"></svg>
+    </section>
+
+    <section class="callouts" id="callouts"></section>
+
+    <section class="same-system" id="same-system"></section>
+
+    <section class="methodology" id="methodology">
+      <h3>Methodology &amp; limitations</h3>
+      <ul>
+        <li>These are <strong>estimates from public data</strong>, not audited figures.</li>
+        <li>CCRs (cost-to-charge ratios) are department-level, not procedure-specific: a blunt instrument.</li>
+        <li>Cost-report data lags ~1–2 years.</li>
+        <li>MRF charges are facility/technical only; the radiologist read fee is billed separately.</li>
+        <li>Negotiated rates are payer-specific; we summarize a range (min/median/max).</li>
+        <li>Critical Access Hospitals are reimbursed on a cost basis, not OPPS; handled and labeled separately.</li>
+        <li><strong>Not medical or financial advice.</strong></li>
+      </ul>
+    </section>
+
+    <footer class="footer">
+      <p>Every displayed number traces to a public source or a named assumption. Hover or tap any bar for citations.</p>
+    </footer>
+  </main>
+
+  <script src="vendor/d3.v7.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

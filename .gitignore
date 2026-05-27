@@ -1,0 +1,15 @@
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor swap / backup files
+*.swp
+*.swo
+*~
+
+# Editor config dirs
+.vscode/
+.idea/
+
+# Claude Code per-project state
+/.claude/
