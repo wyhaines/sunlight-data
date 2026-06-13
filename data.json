@@ -3,7 +3,7 @@
     "cpt": "70553",
     "label": "MRI brain without and with contrast"
   },
-  "as_of": "2026-05-27",
+  "as_of": "2026-06-13",
   "regions": [
     {
       "key": "dfw",
@@ -37,14 +37,14 @@
       },
       "scans_per_year_used": 6000,
       "estimated_cost": {
-        "bottom_up": 273.52,
+        "bottom_up": 284.61,
         "ccr_check": 968.15
       },
       "cost_breakdown": {
-        "technologist_labor": 46.73,
+        "technologist_labor": 55.26,
         "contrast_agent": 87.0,
         "equipment_capital": 76.67,
-        "overhead": 63.12,
+        "overhead": 65.68,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -90,14 +90,14 @@
       },
       "scans_per_year_used": 6000,
       "estimated_cost": {
-        "bottom_up": 273.52,
+        "bottom_up": 284.61,
         "ccr_check": 689.11
       },
       "cost_breakdown": {
-        "technologist_labor": 46.73,
+        "technologist_labor": 55.26,
         "contrast_agent": 87.0,
         "equipment_capital": 76.67,
-        "overhead": 63.12,
+        "overhead": 65.68,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -143,14 +143,14 @@
       },
       "scans_per_year_used": 4500,
       "estimated_cost": {
-        "bottom_up": 306.74,
+        "bottom_up": 317.83,
         "ccr_check": 1207.95
       },
       "cost_breakdown": {
-        "technologist_labor": 46.73,
+        "technologist_labor": 55.26,
         "contrast_agent": 87.0,
         "equipment_capital": 102.22,
-        "overhead": 70.79,
+        "overhead": 73.35,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -196,14 +196,14 @@
       },
       "scans_per_year_used": 4000,
       "estimated_cost": {
-        "bottom_up": 323.36,
+        "bottom_up": 334.44,
         "ccr_check": 641.17
       },
       "cost_breakdown": {
-        "technologist_labor": 46.73,
+        "technologist_labor": 55.26,
         "contrast_agent": 87.0,
         "equipment_capital": 115.0,
-        "overhead": 74.62,
+        "overhead": 77.18,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -249,14 +249,14 @@
       },
       "scans_per_year_used": 4500,
       "estimated_cost": {
-        "bottom_up": 306.74,
+        "bottom_up": 317.83,
         "ccr_check": 535.82
       },
       "cost_breakdown": {
-        "technologist_labor": 46.73,
+        "technologist_labor": 55.26,
         "contrast_agent": 87.0,
         "equipment_capital": 102.22,
-        "overhead": 70.79,
+        "overhead": 73.35,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -302,18 +302,18 @@
       },
       "scans_per_year_used": 500,
       "estimated_cost": {
-        "bottom_up": 696.35,
+        "bottom_up": 708.29,
         "ccr_check": 574.75
       },
       "cost_breakdown": {
-        "technologist_labor": 40.54,
+        "technologist_labor": 49.58,
         "contrast_agent": 87.0,
         "equipment_capital": 400.0,
-        "overhead": 168.81,
+        "overhead": 171.71,
         "capital_basis": "mobile_lease"
       },
       "medicare_reference": {
-        "amount": 696.35,
+        "amount": 708.29,
         "basis": "cost_based",
         "locality_adjusted": false,
         "wage_index": null,
@@ -355,14 +355,14 @@
       },
       "scans_per_year_used": 1500,
       "estimated_cost": {
-        "bottom_up": 573.15,
+        "bottom_up": 585.09,
         "ccr_check": 598.5
       },
       "cost_breakdown": {
-        "technologist_labor": 40.54,
+        "technologist_labor": 49.58,
         "contrast_agent": 87.0,
         "equipment_capital": 306.67,
-        "overhead": 138.94,
+        "overhead": 141.84,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -408,14 +408,14 @@
       },
       "scans_per_year_used": 3500,
       "estimated_cost": {
-        "bottom_up": 341.83,
+        "bottom_up": 353.78,
         "ccr_check": 714.82
       },
       "cost_breakdown": {
-        "technologist_labor": 40.54,
+        "technologist_labor": 49.58,
         "contrast_agent": 87.0,
         "equipment_capital": 131.43,
-        "overhead": 82.87,
+        "overhead": 85.76,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -461,14 +461,14 @@
       },
       "scans_per_year_used": 4500,
       "estimated_cost": {
-        "bottom_up": 303.28,
+        "bottom_up": 315.22,
         "ccr_check": 667.77
       },
       "cost_breakdown": {
-        "technologist_labor": 40.54,
+        "technologist_labor": 49.58,
         "contrast_agent": 87.0,
         "equipment_capital": 102.22,
-        "overhead": 73.52,
+        "overhead": 76.42,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
@@ -514,14 +514,14 @@
       },
       "scans_per_year_used": 5000,
       "estimated_cost": {
-        "bottom_up": 289.79,
+        "bottom_up": 301.73,
         "ccr_check": 639.84
       },
       "cost_breakdown": {
-        "technologist_labor": 40.54,
+        "technologist_labor": 49.58,
         "contrast_agent": 87.0,
         "equipment_capital": 92.0,
-        "overhead": 70.25,
+        "overhead": 73.15,
         "capital_basis": "ownership_amortization"
       },
       "medicare_reference": {
