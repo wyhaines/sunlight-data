@@ -29,34 +29,79 @@
     return m.toFixed(1) + "×";
   }
 
+  let DOC = null;
+  let CPT = "70553";
+
+  window.STB = {
+    el, fmtUSD, fmtMult,
+    onReady: [],
+    get doc() { return DOC; },
+    get cpt() { return CPT; },
+    get proc() { return DOC ? DOC.procedures[CPT] : null; },
+    setCpt(cpt) {
+      if (!DOC || !DOC.procedures[cpt] || cpt === CPT) return;
+      CPT = cpt;
+      renderAll();
+    },
+  };
+
   fetch("data.json")
     .then((r) => {
       if (!r.ok) throw new Error("data.json fetch failed: " + r.status);
       return r.json();
     })
-    .then(render)
+    .then((doc) => {
+      DOC = doc;
+      renderAll();
+      window.STB.onReady.forEach((fn) => fn());
+    })
     .catch((err) => {
       document.getElementById("headline-text").textContent = "Failed to load data: " + err.message;
       console.error(err);
     });
 
-  function render(doc) {
-    renderHeadline(doc);
+  function renderAll() {
+    const p = window.STB.proc;
+    const view = { regions: DOC.regions, hospitals: p.hospitals, same_system: p.same_system, label: p.label, cpt: p.cpt };
+    renderSelector();
+    renderCaveat(p);
+    renderHeadline(view);
     renderLegend();
-    renderChart(doc);
-    renderCallouts(doc);
-    renderSameSystem(doc);
+    renderChart(view);
+    renderCallouts(view);
+    renderSameSystem(view);
+    document.dispatchEvent(new CustomEvent("stb:procedure-changed"));
   }
 
-  function renderHeadline(doc) {
-    const hospitals = doc.hospitals.filter((h) => h.gross_charge != null);
+  function renderSelector() {
+    const tabs = Object.values(DOC.procedures)
+      .sort((a, b) => a.cpt.localeCompare(b.cpt))
+      .map((p) =>
+        el("button", {
+          class: "proc-tab" + (p.cpt === CPT ? " active" : ""),
+          type: "button",
+          "data-cpt": p.cpt,
+        }, `${p.label} (CPT ${p.cpt})`),
+      );
+    tabs.forEach((b) => b.addEventListener("click", () => window.STB.setCpt(b.getAttribute("data-cpt"))));
+    document.getElementById("procedure-selector").replaceChildren(...tabs);
+  }
+
+  function renderCaveat(p) {
+    document.getElementById("caveat").textContent =
+      `CPT ${p.cpt} · ${p.label} · facility/technical charge only (radiologist read excluded) · ` +
+      `Public data with named assumptions, not audited figures.`;
+  }
+
+  function renderHeadline(view) {
+    const hospitals = view.hospitals.filter((h) => h.gross_charge != null);
     const minG = d3.min(hospitals, (h) => h.gross_charge);
     const maxG = d3.max(hospitals, (h) => h.gross_charge);
     const minE = d3.min(hospitals, (h) => h.estimated_cost.bottom_up);
     const maxE = d3.max(hospitals, (h) => h.estimated_cost.bottom_up);
     const h2 = document.getElementById("headline-text");
     h2.replaceChildren(
-      document.createTextNode("The same brain MRI is charged "),
+      document.createTextNode("The same scan (" + view.label + ") is charged "),
       el("strong", null, `${fmtUSD(minG)} to ${fmtUSD(maxG)}`),
       document.createTextNode(` across ${hospitals.length} hospitals in Texas and Wyoming. We estimate it costs them about `),
       el("strong", null, `${fmtUSD(minE)} to ${fmtUSD(maxE)}`),
@@ -87,7 +132,7 @@
     document.getElementById("legend").replaceChildren(...items);
   }
 
-  function renderChart(doc) {
+  function renderChart(view) {
     const svg = d3.select("#chart");
     svg.selectAll("*").remove();
     const viewW = 940;
@@ -95,14 +140,14 @@
     const ROW_H = 48;
     const BAR_H = 14;
 
-    const regions = doc.regions.map((r) => ({
+    const regions = view.regions.map((r) => ({
       ...r,
-      hospitals: doc.hospitals
+      hospitals: view.hospitals
         .filter((h) => h.region === r.key)
         .sort((a, b) => (b.gross_charge || 0) - (a.gross_charge || 0)),
     }));
 
-    const maxGross = d3.max(doc.hospitals, (h) => h.gross_charge) || 7000;
+    const maxGross = d3.max(view.hospitals, (h) => h.gross_charge) || 7000;
     const xMax = Math.ceil((maxGross * 1.1) / 1000) * 1000;
     const xScale = d3.scaleLinear().domain([0, xMax]).range([margins.left, viewW - margins.right]);
 
@@ -218,13 +263,15 @@
         .attr("stroke-dasharray", "3 2");
     }
 
-    const medX = xScale(h.medicare_reference.amount);
-    svg.append("polygon")
-      .attr("points", `${medX},${barTop - 2} ${medX - 5},${barTop - 12} ${medX + 5},${barTop - 12}`)
-      .attr("fill", "var(--c-medicare)");
-    if (h.is_critical_access) {
-      svg.append("text").attr("class", "cah-label-medicare")
-        .attr("x", medX + 9).attr("y", barTop - 4).text("Medicare (cost-based)");
+    if (h.medicare_reference.amount != null) {
+      const medX = xScale(h.medicare_reference.amount);
+      svg.append("polygon")
+        .attr("points", `${medX},${barTop - 2} ${medX - 5},${barTop - 12} ${medX + 5},${barTop - 12}`)
+        .attr("fill", "var(--c-medicare)");
+      if (h.is_critical_access) {
+        svg.append("text").attr("class", "cah-label-medicare")
+          .attr("x", medX + 9).attr("y", barTop - 4).text("Medicare (cost-based)");
+      }
     }
 
     if (h.cash_price != null) {
@@ -260,12 +307,19 @@
         .text("$" + Math.round(gross).toLocaleString());
     }
 
+    if (h.multiples && h.multiples.cash_vs_medicare != null) {
+      svg.append("text").attr("class", "row-multiple")
+        .attr("x", labelRightX).attr("y", barTop + 27).attr("text-anchor", "end")
+        .text(`cash = ${fmtMult(h.multiples.cash_vs_medicare)} Medicare${h.is_critical_access ? " (cost-based)" : ""}`);
+    }
+
     svg.append("rect")
       .attr("x", 0).attr("y", rowStart).attr("width", viewW).attr("height", 48)
       .attr("fill", "transparent").style("cursor", "pointer")
       .on("mouseenter", function (ev) { showTooltip(tooltip, ev, h); })
       .on("mousemove", function (ev) { moveTooltip(tooltip, ev); })
-      .on("mouseleave", function () { hideTooltip(tooltip); });
+      .on("mouseleave", function () { hideTooltip(tooltip); })
+      .on("click", () => { location.hash = "h=" + h.key + "&p=" + window.STB.cpt; });
   }
 
   function ownershipTag(h) {
@@ -295,7 +349,11 @@
       el("div", { class: "dim micro" },
         `labor ${fmt(cb.technologist_labor)} · contrast ${fmt(cb.contrast_agent)} · capital ${fmt(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmt(cb.overhead)}`),
       el("div", null, `CCR×gross: ${fmt(h.estimated_cost.ccr_check)}` + (h.ccr.value != null ? ` (CCR ${h.ccr.value.toFixed(3)} FY${h.ccr.fy})` : "")),
-      el("div", null, "Medicare: ", el("strong", null, fmt(h.medicare_reference.amount)), ` (${h.medicare_reference.basis.replace("_", " ")})`),
+      el("div", null, "Medicare: ", el("strong", null, fmt(h.medicare_reference.amount)), ` (${(h.medicare_reference.basis || "").replace("_", " ")})`),
+      el("hr"),
+      el("div", { class: "dim micro" }, h.provenance.prices),
+      el("div", { class: "dim micro" }, h.provenance.ccr),
+      el("div", { class: "dim micro" }, h.provenance.medicare),
     ];
     if (h.medicare_reference.beneficiary_note) {
       children.push(el("div", { class: "warn micro" }, h.medicare_reference.beneficiary_note));
@@ -315,15 +373,15 @@
     tip.classList.remove("visible");
   }
 
-  function renderCallouts(doc) {
-    const byRegion = d3.group(doc.hospitals.filter((h) => h.gross_charge != null), (h) => h.region);
-    const spreads = doc.regions.map((r) => {
+  function renderCallouts(view) {
+    const byRegion = d3.group(view.hospitals.filter((h) => h.gross_charge != null), (h) => h.region);
+    const spreads = view.regions.map((r) => {
       const list = byRegion.get(r.key) || [];
       const min = d3.min(list, (h) => h.gross_charge);
       const max = d3.max(list, (h) => h.gross_charge);
       return { region: r.label, mult: min && max ? max / min : null };
     });
-    const all = doc.hospitals.filter((h) => h.gross_charge != null);
+    const all = view.hospitals.filter((h) => h.gross_charge != null);
     const crossMin = d3.min(all, (h) => h.gross_charge);
     const crossMax = d3.max(all, (h) => h.gross_charge);
     const crossMult = crossMin && crossMax ? crossMax / crossMin : null;
@@ -341,10 +399,15 @@
     );
   }
 
-  function renderSameSystem(doc) {
+  function renderSameSystem(view) {
     const container = document.getElementById("same-system");
-    const torrington = doc.hospitals.find((h) => h.key === "banner_torrington");
-    const casper = doc.hospitals.find((h) => h.key === "banner_casper");
+    const ss = view.same_system;
+    if (ss == null) {
+      container.replaceChildren();
+      return;
+    }
+    const torrington = view.hospitals.find((h) => h.key === ss.cah_key);
+    const casper = view.hospitals.find((h) => h.key === ss.flagship_key);
     if (!torrington || !casper) {
       container.replaceChildren();
       return;
@@ -357,6 +420,11 @@
         ),
       );
     }
+    const takeaway = ss && ss.cash_ratio != null && ss.cost_ratio != null
+      ? `For this procedure, Banner's chargemaster prices are nearly identical at both facilities` +
+        ` (ratio ${ss.gross_ratio == null ? "n/a" : ss.gross_ratio}×), the rural CAH costs ${ss.cost_ratio}× as much to deliver per scan` +
+        `, and its cash price runs ${ss.cash_ratio}× the urban flagship's.`
+      : "Comparison unavailable for this procedure (missing price data).";
     container.replaceChildren(
       el("h4", null, "Same operator, same chargemaster, but the rural patient pays more cash"),
       el("div", { class: "pair" },
@@ -375,11 +443,7 @@
           med: casper.medicare_reference.amount,
         }),
       ),
-      el("p", { class: "takeaway" },
-        "Banner's chargemaster price is essentially the same at both facilities. But the rural CAH costs more than 2× as much to deliver per scan, and its cash price runs ~60% higher than the urban flagship's, the opposite of what the cost difference would suggest.",
-      ),
+      el("p", { class: "takeaway" }, takeaway),
     );
   }
-
-  window.__sunlight = { el, fmtUSD, fmtMult };
 })();

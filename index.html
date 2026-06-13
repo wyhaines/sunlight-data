@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShowTheBill: MRI brain w/wo contrast (CPT 70553)</title>
+  <title>ShowTheBill: what a brain MRI should cost (CPT 70551 / 70552 / 70553)</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -15,8 +15,10 @@
 
     <section class="headline" id="headline">
       <h2 id="headline-text">Loading…</h2>
-      <p class="caveat">CPT 70553 · MRI brain without and with contrast · facility/technical charge only (radiologist read excluded) · Public data with named assumptions, not audited figures.</p>
+      <p class="caveat" id="caveat">Loading…</p>
     </section>
+
+    <section class="procedure-selector" id="procedure-selector"></section>
 
     <section class="legend" id="legend"></section>
 
@@ -28,6 +30,9 @@
 
     <section class="same-system" id="same-system"></section>
 
+    <section class="checker" id="checker"></section>
+    <section class="detail" id="detail"></section>
+
     <section class="methodology" id="methodology">
       <h3>Methodology &amp; limitations</h3>
       <ul>
@@ -37,6 +42,8 @@
         <li>MRF charges are facility/technical only; the radiologist read fee is billed separately.</li>
         <li>Negotiated rates are payer-specific; we summarize a range (min/median/max).</li>
         <li>Critical Access Hospitals are reimbursed on a cost basis, not OPPS; handled and labeled separately.</li>
+        <li>Per-procedure technologist minutes are labeled assumptions; scanner volume is total annual throughput shared across procedures (a labeled estimate — per-site MRI volume is not publicly reported).</li>
+        <li>The bill checker compares your amount against published prices and estimates in your browser; nothing you enter is transmitted or stored.</li>
         <li><strong>Not medical or financial advice.</strong></li>
       </ul>
     </section>
@@ -54,6 +61,8 @@
 
   <script src="vendor/d3.v7.min.js"></script>
   <script src="app.js"></script>
+  <script src="detail.js"></script>
+  <script src="checker.js"></script>
   <script data-goatcounter="https://showthebill.goatcounter.com/count" async src="vendor/count.js"></script>
 </body>
 </html>
