@@ -91,7 +91,10 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 }
 
 /* Procedure selector */
-.procedure-selector { display: flex; gap: 8px; margin: 14px 0 4px; flex-wrap: wrap; }
+.procedure-selector { display: block; margin: 14px 0 4px; }
+.proc-group { margin-bottom: 8px; }
+.proc-group-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #777; margin: 6px 0 2px; }
+.proc-group-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .proc-tab {
   font: inherit; padding: 6px 14px; border: 1px solid #bbb; background: #fff;
   border-radius: 16px; cursor: pointer; color: #444;

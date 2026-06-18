@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ShowTheBill: what a brain MRI should cost (CPT 70551 / 70552 / 70553)</title>
+  <title>ShowTheBill: what imaging procedures should cost — 15 codes, public data</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -23,7 +23,7 @@
     <section class="legend" id="legend"></section>
 
     <section class="chart-wrap">
-      <svg id="chart" role="img" aria-label="Per-hospital cost vs. charge for CPT 70553"></svg>
+      <svg id="chart" role="img" aria-label="Per-hospital cost vs. charge for selected imaging procedure"></svg>
     </section>
 
     <section class="callouts" id="callouts"></section>
@@ -37,12 +37,16 @@
       <h3>Methodology &amp; limitations</h3>
       <ul>
         <li>These are <strong>estimates from public data</strong>, not audited figures.</li>
-        <li>CCRs (cost-to-charge ratios) are department-level, not procedure-specific: a blunt instrument.</li>
+        <li>Coverage spans <strong>15 imaging codes across five modalities</strong> (MRI, CT, ultrasound, X-ray, mammography), drawn from the CMS-70 shoppable-services list plus two retained MRI sibling codes.</li>
+        <li>Each procedure receives three independent estimates: a bottom-up cost build (labor + equipment + overhead from named assumptions), a CCR cross-check (gross charge × department CCR from each hospital's Medicare cost report), and a Medicare technical-payment reference.</li>
+        <li>CCRs (cost-to-charge ratios) are department-level, not procedure-specific: a blunt instrument. The diagnostic-radiology CCR (HCRIS Worksheet C Part I, line 54) applies to all 15 imaging codes — CT, ultrasound, X-ray, and mammography all share this ratio with MRI.</li>
         <li>Cost-report data lags ~1–2 years.</li>
-        <li>MRF charges are facility/technical only; the radiologist read fee is billed separately.</li>
+        <li>MRF charges are facility/technical only; the radiologist read fee is billed separately and is excluded throughout.</li>
         <li>Negotiated rates are payer-specific; we summarize a range (min/median/max).</li>
         <li>Critical Access Hospitals are reimbursed on a cost basis, not OPPS; handled and labeled separately.</li>
-        <li>Per-procedure technologist minutes are labeled assumptions; scanner volume is total annual throughput shared across procedures (a labeled estimate — per-site MRI volume is not publicly reported).</li>
+        <li>Medicare reference rates are OPPS technical-only for most codes (CY2026, locality-adjusted). The three mammography codes (77065, 77066, 77067) are OPPS status A — Medicare does not pay them under OPPS — so their reference is the Medicare Physician Fee Schedule technical-component national amount; this rate is <em>not</em> locality-adjusted.</li>
+        <li>Per-procedure technologist minutes and equipment capital costs for CT, ultrasound, X-ray, and mammography are <strong>labeled low-confidence assumptions</strong> (per-site scan volume for non-MRI modalities is not publicly reported). The MRI bottom-up model carries the same caveat.</li>
+        <li>Some rural hospitals legitimately lack certain services — where no price appears in a hospital&#8217;s machine-readable file for a given code, we show no price rather than imputing one.</li>
         <li>The bill checker compares your amount against published prices and estimates in your browser; nothing you enter is transmitted or stored.</li>
         <li><strong>Not medical or financial advice.</strong></li>
       </ul>

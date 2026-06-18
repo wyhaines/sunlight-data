@@ -73,18 +73,41 @@
     document.dispatchEvent(new CustomEvent("stb:procedure-changed"));
   }
 
+  const MODALITY_ORDER = ["mri", "ct", "ultrasound", "xray", "mammography"];
+  const MODALITY_LABEL = {
+    mri: "MRI", ct: "CT", ultrasound: "Ultrasound", xray: "X-ray", mammography: "Mammography",
+  };
+
   function renderSelector() {
-    const tabs = Object.values(DOC.procedures)
-      .sort((a, b) => a.cpt.localeCompare(b.cpt))
-      .map((p) =>
-        el("button", {
-          class: "proc-tab" + (p.cpt === CPT ? " active" : ""),
-          type: "button",
-          "data-cpt": p.cpt,
-        }, `${p.label} (CPT ${p.cpt})`),
+    const procs = Object.values(DOC.procedures);
+    const groups = new Map();
+    procs.forEach((p) => {
+      const key = p.modality || p.category || "other";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(p);
+    });
+    const orderedKeys = [
+      ...MODALITY_ORDER.filter((k) => groups.has(k)),
+      ...[...groups.keys()].filter((k) => !MODALITY_ORDER.includes(k)).sort(),
+    ];
+    const blocks = orderedKeys.map((key) => {
+      const tabs = groups.get(key)
+        .sort((a, b) => a.cpt.localeCompare(b.cpt))
+        .map((p) => {
+          const b = el("button", {
+            class: "proc-tab" + (p.cpt === CPT ? " active" : ""),
+            type: "button",
+            "data-cpt": p.cpt,
+          }, `${p.label} (CPT ${p.cpt})`);
+          b.addEventListener("click", () => window.STB.setCpt(p.cpt));
+          return b;
+        });
+      return el("div", { class: "proc-group" },
+        el("div", { class: "proc-group-label" }, MODALITY_LABEL[key] || key),
+        el("div", { class: "proc-group-tabs" }, ...tabs),
       );
-    tabs.forEach((b) => b.addEventListener("click", () => window.STB.setCpt(b.getAttribute("data-cpt"))));
-    document.getElementById("procedure-selector").replaceChildren(...tabs);
+    });
+    document.getElementById("procedure-selector").replaceChildren(...blocks);
   }
 
   function renderCaveat(p) {
