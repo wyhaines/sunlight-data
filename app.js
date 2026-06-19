@@ -62,14 +62,18 @@
 
   function renderAll() {
     const p = window.STB.proc;
-    const view = { regions: DOC.regions, hospitals: p.hospitals, same_system: p.same_system, label: p.label, cpt: p.cpt };
     renderSelector();
     renderCaveat(p);
-    renderHeadline(view);
-    renderLegend();
-    renderChart(view);
-    renderCallouts(view);
-    renderSameSystem(view);
+    if (p.tier === 2) {
+      renderTier2(p);
+    } else {
+      const view = { regions: DOC.regions, hospitals: p.hospitals, same_system: p.same_system, label: p.label, cpt: p.cpt };
+      renderHeadline(view);
+      renderLegend();
+      renderChart(view);
+      renderCallouts(view);
+      renderSameSystem(view);
+    }
     document.dispatchEvent(new CustomEvent("stb:procedure-changed"));
   }
 
@@ -77,19 +81,39 @@
   const MODALITY_LABEL = {
     mri: "MRI", ct: "CT", ultrasound: "Ultrasound", xray: "X-ray", mammography: "Mammography",
   };
+  const CATEGORY_ORDER = ["imaging", "lab", "em", "procedure", "surgery"];
+  const CATEGORY_LABEL = {
+    imaging: "Imaging", lab: "Lab", em: "Office & ER visits", procedure: "Procedures", surgery: "Surgery",
+  };
+
+  function procGroupKey(p) {
+    // Imaging is sub-grouped by modality; every other category groups by itself.
+    return p.category === "imaging" && p.modality ? p.modality : (p.category || "other");
+  }
+
+  function groupRank(key) {
+    const mi = MODALITY_ORDER.indexOf(key);
+    if (mi >= 0) return [CATEGORY_ORDER.indexOf("imaging"), mi];   // imaging modalities first, in order
+    const ci = CATEGORY_ORDER.indexOf(key);
+    return [ci >= 0 ? ci : CATEGORY_ORDER.length, 0];
+  }
+
+  function groupLabel(key) {
+    return MODALITY_LABEL[key] || CATEGORY_LABEL[key] || key;
+  }
 
   function renderSelector() {
     const procs = Object.values(DOC.procedures);
     const groups = new Map();
     procs.forEach((p) => {
-      const key = p.modality || p.category || "other";
+      const key = procGroupKey(p);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(p);
     });
-    const orderedKeys = [
-      ...MODALITY_ORDER.filter((k) => groups.has(k)),
-      ...[...groups.keys()].filter((k) => !MODALITY_ORDER.includes(k)).sort(),
-    ];
+    const orderedKeys = [...groups.keys()].sort((a, b) => {
+      const ra = groupRank(a), rb = groupRank(b);
+      return ra[0] - rb[0] || ra[1] - rb[1] || a.localeCompare(b);
+    });
     const blocks = orderedKeys.map((key) => {
       const tabs = groups.get(key)
         .sort((a, b) => a.cpt.localeCompare(b.cpt))
@@ -103,7 +127,7 @@
           return b;
         });
       return el("div", { class: "proc-group" },
-        el("div", { class: "proc-group-label" }, MODALITY_LABEL[key] || key),
+        el("div", { class: "proc-group-label" }, groupLabel(key)),
         el("div", { class: "proc-group-tabs" }, ...tabs),
       );
     });
@@ -111,9 +135,12 @@
   }
 
   function renderCaveat(p) {
+    const base = `CPT ${p.cpt} · ${p.label}`;
+    const tierNote = p.tier === 2
+      ? " · posted prices vs. Medicare CLFS national rate — not a cost estimate"
+      : " · facility/technical charge only (radiologist read excluded)";
     document.getElementById("caveat").textContent =
-      `CPT ${p.cpt} · ${p.label} · facility/technical charge only (radiologist read excluded) · ` +
-      `Public data with named assumptions, not audited figures.`;
+      `${base}${tierNote} · Public data with named assumptions, not audited figures.`;
   }
 
   function renderHeadline(view) {
@@ -155,7 +182,88 @@
     document.getElementById("legend").replaceChildren(...items);
   }
 
+  function renderTier2(p) {
+    // Tier-2 reuses the chart container region for its table; clear Tier-1-only sections.
+    document.getElementById("legend").replaceChildren();
+    document.getElementById("callouts").replaceChildren();
+    document.getElementById("same-system").replaceChildren();
+
+    const hospitals = p.hospitals.filter((h) => h.gross_charge != null || h.cash_price != null);
+    const med = p.medicare_national_usd;
+
+    const headline = document.getElementById("headline-text");
+    const cashVals = hospitals.map((h) => h.cash_price).filter((v) => v != null);
+    const minC = cashVals.length ? Math.min(...cashVals) : null;
+    const maxC = cashVals.length ? Math.max(...cashVals) : null;
+    headline.replaceChildren(
+      document.createTextNode(`Posted prices for ${p.label} run `),
+      el("strong", null, `${fmtUSD(minC)} to ${fmtUSD(maxC)}`),
+      document.createTextNode(` in cash across ${hospitals.length} hospitals. Medicare's published rate is `),
+      el("strong", null, fmtUSD(med)),
+      document.createTextNode("."),
+    );
+
+    const tierBadge = el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate");
+
+    const rows = hospitals
+      .slice()
+      .sort((a, b) => (b.cash_price || b.gross_charge || 0) - (a.cash_price || a.gross_charge || 0))
+      .map((h) => {
+        const mult = h.multiples && h.multiples.cash_vs_medicare;
+        return el("div", { class: "tier2-row" + (h.is_critical_access ? " cah" : "") },
+          el("div", { class: "tier2-name" },
+            el("span", null, h.name),
+            el("span", { class: "tier2-tag dim micro" }, tier2Tag(h)),
+          ),
+          el("div", { class: "tier2-prices" },
+            `gross ${fmtUSD(h.gross_charge)} · cash ${fmtUSD(h.cash_price)} · negotiated ` +
+            `${fmtUSD(h.negotiated.min)}–${fmtUSD(h.negotiated.max)}` + postedSpreadNote(h)),
+          el("div", { class: "tier2-mult" },
+            mult != null ? `cash = ${fmtMult(mult)} Medicare` : "no posted price"),
+        );
+      });
+
+    // Render the Tier-2 panel inside the chart-wrap (replacing the SVG-driven chart).
+    const panel = el("div", { class: "tier2-panel" },
+      tierBadge,
+      el("div", { class: "tier2-medicare dim" },
+        `Medicare reference: ${fmtUSD(med)} — Clinical Laboratory Fee Schedule national rate ` +
+        `(no wage adjustment, no technical/professional split).`),
+      ...rows,
+    );
+    const wrap = document.querySelector(".chart-wrap");
+    wrap.replaceChildren(panel);
+  }
+
+  function tier2Tag(h) {
+    const parts = [];
+    if (h.ownership) parts.push(h.ownership.replace(/_/g, " "));
+    if (h.is_critical_access) parts.push("CAH");
+    parts.push(h.region);
+    return parts.join(" · ");
+  }
+
+  // Supplementary chargemaster-range note: when a hospital posts the same code at
+  // multiple internal line items (n_items > 1), surface the gross spread + count
+  // alongside the median price. This is genuine transparency — a hospital posting
+  // one lipid panel at 11 prices, $60–$207. The headline gross/cash stays the
+  // median (already in the data); this only adds context.
+  function postedSpreadNote(h) {
+    const ps = h.posted_spread;
+    if (!ps || !(ps.n_items > 1)) return "";
+    const range = ps.gross_max > ps.gross_min ? `, ${fmtUSD(ps.gross_min)}–${fmtUSD(ps.gross_max)}` : "";
+    return ` · ${ps.n_items} items${range}`;
+  }
+
   function renderChart(view) {
+    const wrap = document.querySelector(".chart-wrap");
+    if (!document.getElementById("chart")) {
+      const svgEl = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svgEl.setAttribute("id", "chart");
+      svgEl.setAttribute("role", "img");
+      svgEl.setAttribute("aria-label", "Per-hospital cost vs. charge for selected imaging procedure");
+      wrap.replaceChildren(svgEl);
+    }
     const svg = d3.select("#chart");
     svg.selectAll("*").remove();
     const viewW = 940;

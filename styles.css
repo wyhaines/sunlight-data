@@ -111,6 +111,18 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .detail-amount { font-variant-numeric: tabular-nums; font-weight: 600; }
 .detail-breakdown { margin-top: 8px; }
 
+/* Tier-2 (posted prices, no cost estimate) */
+.tier2-panel { display: flex; flex-direction: column; gap: 8px; }
+.tier2-badge { display: inline-block; align-self: flex-start; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); background: #faf0ec; border: 1px solid #e7cdc6; border-radius: 4px; padding: 4px 10px; }
+.tier2-medicare { font-size: 13px; margin-bottom: 4px; }
+.tier2-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: baseline; padding: 8px 0; border-bottom: 1px dotted #e2e2e2; font-size: 13px; }
+.tier2-row.cah { background: var(--accent-band); }
+.tier2-name span:first-child { font-weight: 600; }
+.tier2-tag { display: block; }
+.tier2-prices { font-variant-numeric: tabular-nums; color: #444; }
+.tier2-mult { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+@media (max-width: 720px) { .tier2-row { grid-template-columns: 1fr; gap: 2px; } .tier2-mult { text-align: left; } }
+
 /* Bill checker */
 .checker { border-top: 2px solid #1a1a1a; margin-top: 28px; padding-top: 12px; }
 .chk-form { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; margin: 10px 0; }

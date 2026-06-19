@@ -43,8 +43,8 @@
     container.replaceChildren(
       el("h3", null, "Check a bill you received"),
       el("p", { class: "dim" },
-        "Compare what you were charged for this scan against the hospital's own published prices, " +
-        "its cost-report-implied cost, and what Medicare pays."),
+        "Compare what you were charged against the hospital's own published prices and what Medicare pays. " +
+        "For imaging (Tier 1) we also show the cost-report-implied cost; lab codes (Tier 2) show posted prices vs. Medicare only."),
       el("div", { class: "chk-form" },
         el("label", null, "Procedure ", procSelect),
         el("label", null, "Hospital ", hospSelect),
@@ -57,8 +57,8 @@
     );
   }
 
-  function refs(h) {
-    const costs = [h.estimated_cost.bottom_up, h.estimated_cost.ccr_check].filter((v) => v != null);
+  function refs(h, tier2) {
+    const costs = tier2 ? [] : [h.estimated_cost.bottom_up, h.estimated_cost.ccr_check].filter((v) => v != null);
     return {
       gross: h.gross_charge,
       cash: h.cash_price,
@@ -78,13 +78,23 @@
     return "at_or_below";
   }
 
-  const VERDICT_COPY = {
-    above_gross: "is higher than this hospital's own full chargemaster price for this scan.",
-    above_cash: "is higher than this hospital's posted cash (self-pay) price.",
-    above_cost: "is above the range both public-data methods estimate this scan costs to deliver here.",
-    above_medicare: "is above what Medicare pays for the same scan, though within the estimated cost range.",
-    at_or_below: "is at or below the lowest reference we have for this scan here.",
-  };
+  // Verdict copy is tier/category-aware: labs are "tests" not "scans", and the
+  // Tier-2 above_medicare line must NOT claim an estimated cost range (Tier-2
+  // has no cost-to-deliver estimate — that would contradict the "not a cost
+  // estimate" stance).
+  function verdictCopy(band, p) {
+    const noun = p.category === "lab" ? "test" : p.category === "imaging" ? "scan" : "service";
+    switch (band) {
+      case "above_gross": return `is higher than this hospital's own full chargemaster price for this ${noun}.`;
+      case "above_cash": return "is higher than this hospital's posted cash (self-pay) price.";
+      case "above_cost": return `is above the range both public-data methods estimate this ${noun} costs to deliver here.`;
+      case "above_medicare": return p.tier === 2
+        ? `is above what Medicare pays for the same ${noun}.`
+        : `is above what Medicare pays for the same ${noun}, though within the estimated cost range.`;
+      case "at_or_below": return `is at or below the lowest reference we have for this ${noun} here.`;
+      default: return "";
+    }
+  }
 
   function renderVerdict(target, p, hospKey, amount) {
     if (hospKey === "__other__") {
@@ -92,22 +102,31 @@
       return;
     }
     const h = p.hospitals.find((x) => x.key === hospKey);
-    const r = refs(h);
+    const tier2 = p.tier === 2;
+    const r = refs(h, tier2);
     const band = classify(amount, r);
 
-    const rows = [
-      ["Posted chargemaster price", r.gross, h.provenance.prices],
-      ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
-      ["Estimated cost to deliver (two methods)",
-        null, h.provenance.bottom_up,
-        r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
-      ["Medicare reference", r.medicare, h.provenance.medicare],
-    ];
+    const medicareLabel = tier2 ? "Medicare reference (CLFS national)" : "Medicare reference";
+    const rows = tier2
+      ? [
+          ["Posted chargemaster price", r.gross, h.provenance.prices],
+          ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+          [medicareLabel, r.medicare, h.provenance.medicare],
+        ]
+      : [
+          ["Posted chargemaster price", r.gross, h.provenance.prices],
+          ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+          ["Estimated cost to deliver (two methods)",
+            null, h.provenance.bottom_up,
+            r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
+          [medicareLabel, r.medicare, h.provenance.medicare],
+        ];
 
-    target.replaceChildren(
+    target.replaceChildren(...[
       el("p", { class: "chk-verdict-line" },
         el("strong", null, fmtUSD(amount)),
-        ` ${VERDICT_COPY[band]}`),
+        ` ${verdictCopy(band, p)}`),
+      tier2 ? el("p", { class: "micro dim" }, "Tier 2: compared against posted prices and Medicare's CLFS national rate only — no cost-to-deliver estimate for lab codes.") : null,
       ...rows.map(([label, val, source, custom]) =>
         el("div", { class: "detail-row" },
           el("div", { class: "detail-label" }, label),
@@ -118,7 +137,7 @@
       el("p", { class: "micro dim" },
         "These are estimates from public data, compared for context — not a determination that any " +
         "bill is correct or incorrect, and not medical, legal, or financial advice."),
-    );
+    ].filter((c) => c != null));
   }
 
   function renderUnlisted(target, p, amount) {
@@ -137,7 +156,7 @@
         ? el("div", { class: "detail-row" },
             el("div", { class: "detail-label" }, "Medicare national rate (unadjusted)"),
             el("div", { class: "detail-amount" }, fmtUSD(p.medicare_national_usd)),
-            el("div", { class: "detail-source dim micro" }, "CY2026 OPPS Addendum B"))
+            el("div", { class: "detail-source dim micro" }, p.tier === 2 ? "CY2026 Medicare CLFS national rate" : "CY2026 OPPS Addendum B"))
         : el("p", { class: "dim micro" }, "Medicare reference unavailable for this code."),
       guidance(),
       el("p", { class: "micro dim" },
