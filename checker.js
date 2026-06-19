@@ -1,5 +1,5 @@
 (function () {
-  const { el, fmtUSD } = window.STB;
+  const { el, fmtUSD, medicareShort } = window.STB;
 
   function build() {
     const container = document.getElementById("checker");
@@ -44,7 +44,7 @@
       el("h3", null, "Check a bill you received"),
       el("p", { class: "dim" },
         "Compare what you were charged against the hospital's own published prices and what Medicare pays. " +
-        "For imaging (Tier 1) we also show the cost-report-implied cost; lab codes (Tier 2) show posted prices vs. Medicare only."),
+        "For imaging (Tier 1) we also show the cost-report-implied cost; Tier 2 codes show posted prices vs. Medicare only."),
       el("div", { class: "chk-form" },
         el("label", null, "Procedure ", procSelect),
         el("label", null, "Hospital ", hospSelect),
@@ -83,7 +83,10 @@
   // has no cost-to-deliver estimate — that would contradict the "not a cost
   // estimate" stance).
   function verdictCopy(band, p) {
-    const noun = p.category === "lab" ? "test" : p.category === "imaging" ? "scan" : "service";
+    const noun = p.category === "lab" ? "test"
+      : p.category === "imaging" ? "scan"
+      : p.category === "em" ? "visit"
+      : "procedure";
     switch (band) {
       case "above_gross": return `is higher than this hospital's own full chargemaster price for this ${noun}.`;
       case "above_cash": return "is higher than this hospital's posted cash (self-pay) price.";
@@ -106,12 +109,12 @@
     const r = refs(h, tier2);
     const band = classify(amount, r);
 
-    const medicareLabel = tier2 ? "Medicare reference (CLFS national)" : "Medicare reference";
+    const medLabel = tier2 ? `Medicare reference (${medicareShort(h.medicare_reference.basis)})` : "Medicare reference";
     const rows = tier2
       ? [
           ["Posted chargemaster price", r.gross, h.provenance.prices],
           ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
-          [medicareLabel, r.medicare, h.provenance.medicare],
+          [medLabel, r.medicare, h.provenance.medicare],
         ]
       : [
           ["Posted chargemaster price", r.gross, h.provenance.prices],
@@ -119,14 +122,17 @@
           ["Estimated cost to deliver (two methods)",
             null, h.provenance.bottom_up,
             r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
-          [medicareLabel, r.medicare, h.provenance.medicare],
+          [medLabel, r.medicare, h.provenance.medicare],
         ];
 
     target.replaceChildren(...[
       el("p", { class: "chk-verdict-line" },
         el("strong", null, fmtUSD(amount)),
         ` ${verdictCopy(band, p)}`),
-      tier2 ? el("p", { class: "micro dim" }, "Tier 2: compared against posted prices and Medicare's CLFS national rate only — no cost-to-deliver estimate for lab codes.") : null,
+      tier2 ? el("p", { class: "micro dim" },
+        r.medicare == null
+          ? "Medicare publishes no comparable facility rate for this code; compared against posted prices only."
+          : `Tier 2: compared against posted prices and Medicare's ${medicareShort(h.medicare_reference.basis)} rate only — no cost-to-deliver estimate.`) : null,
       ...rows.map(([label, val, source, custom]) =>
         el("div", { class: "detail-row" },
           el("div", { class: "detail-label" }, label),
@@ -156,7 +162,7 @@
         ? el("div", { class: "detail-row" },
             el("div", { class: "detail-label" }, "Medicare national rate (unadjusted)"),
             el("div", { class: "detail-amount" }, fmtUSD(p.medicare_national_usd)),
-            el("div", { class: "detail-source dim micro" }, p.tier === 2 ? "CY2026 Medicare CLFS national rate" : "CY2026 OPPS Addendum B"))
+            el("div", { class: "detail-source dim micro" }, p.tier === 2 ? "CY2026 Medicare " + medicareShort(window.STB.tier2Basis(p)) : "CY2026 OPPS Addendum B"))
         : el("p", { class: "dim micro" }, "Medicare reference unavailable for this code."),
       guidance(),
       el("p", { class: "micro dim" },

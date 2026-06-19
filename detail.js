@@ -1,5 +1,5 @@
 (function () {
-  const { el, fmtUSD, fmtMult } = window.STB;
+  const { el, fmtUSD, fmtMult, medicareShort } = window.STB;
 
   function parseHash() {
     const m = location.hash.match(/^#h=([\w-]+)(?:&p=(\d{5}))?$/);
@@ -22,6 +22,8 @@
     }
 
     const tier2 = p.tier === 2;
+    const medRef = h.medicare_reference;
+    const medUnavail = medRef.amount == null || medRef.basis === "unavailable";
 
     const rows = tier2
       ? [
@@ -30,7 +32,9 @@
           ["Negotiated (min / median / max)",
             null, h.provenance.prices,
             `${fmtUSD(h.negotiated.min)} / ${fmtUSD(h.negotiated.median)} / ${fmtUSD(h.negotiated.max)}`],
-          ["Medicare reference (CLFS national)", h.medicare_reference.amount, h.provenance.medicare],
+          [medUnavail ? "Medicare reference" : `Medicare reference (${medicareShort(medRef.basis)})`,
+            medRef.amount, h.provenance.medicare,
+            medUnavail ? "no published reference" : null],
         ]
       : [
           ["Chargemaster (gross)", h.gross_charge, h.provenance.prices],
@@ -53,8 +57,7 @@
 
     const multLine = h.multiples.cash_vs_medicare != null
       ? `This hospital's cash price is ${fmtMult(h.multiples.cash_vs_medicare)} its Medicare reference` +
-        (h.multiples.medicare_basis === "cost_based" ? " (CAH: cost-based reference, not OPPS)" : "") +
-        (h.multiples.medicare_basis === "clfs" ? " (CLFS national rate)" : "") +
+        ` (${medicareShort(h.multiples.medicare_basis)})` +
         `; the chargemaster is ${fmtMult(h.multiples.gross_vs_medicare)}.`
       : "Medicare reference unavailable for this code — multiples not computed.";
 
@@ -72,8 +75,8 @@
 
     const breakdown = tier2
       ? el("div", { class: "detail-breakdown dim" },
-          "Posted prices only — Tier 2. No bottom-up cost build or CCR cross-check for lab codes; " +
-          "the comparison is the hospital's posted price against Medicare's published CLFS rate.")
+          "Posted prices only — Tier 2. No bottom-up cost build or CCR cross-check; " +
+          "the comparison is the hospital's posted price against Medicare's published rate.")
       : (function () {
           const cb = h.cost_breakdown;
           return el("div", { class: "detail-breakdown dim" },

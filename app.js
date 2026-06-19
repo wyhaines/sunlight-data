@@ -29,11 +29,43 @@
     return m.toFixed(1) + "×";
   }
 
+  function medicareLabel(basis) {
+    switch (basis) {
+      case "clfs": return "Clinical Laboratory Fee Schedule national rate (no wage adjustment, no technical/professional split)";
+      case "opps_technical": return "OPPS Addendum B rate, wage-index adjusted (technical/facility component)";
+      case "opps_facility": return "OPPS facility clinic-visit rate (billed as HCPCS G0463), wage-index adjusted";
+      case "pfs": return "Physician Fee Schedule national amount (therapy code; no wage adjustment)";
+      case "pfs_technical": return "Physician Fee Schedule technical component, national (no wage adjustment)";
+      case "cost_based": return "Critical-Access cost-based reference (~101% of cost)";
+      case "unavailable": return "No published Medicare reference for this code";
+      default: return "Medicare reference";
+    }
+  }
+
+  function medicareShort(basis) {
+    switch (basis) {
+      case "clfs": return "CLFS national";
+      case "opps_technical": return "OPPS";
+      case "opps_facility": return "OPPS facility (G0463)";
+      case "pfs": return "PFS national";
+      case "pfs_technical": return "PFS technical";
+      case "cost_based": return "CAH cost-based";
+      case "unavailable": return "unavailable";
+      default: return "Medicare";
+    }
+  }
+
+  // Tier-2 basis is uniform per procedure; read it from the first hospital that has one.
+  function tier2Basis(p) {
+    const h = (p.hospitals || []).find((x) => x.medicare_reference && x.medicare_reference.basis);
+    return h ? h.medicare_reference.basis : "unavailable";
+  }
+
   let DOC = null;
   let CPT = "70553";
 
   window.STB = {
-    el, fmtUSD, fmtMult,
+    el, fmtUSD, fmtMult, medicareLabel, medicareShort, tier2Basis,
     onReady: [],
     get doc() { return DOC; },
     get cpt() { return CPT; },
@@ -83,7 +115,7 @@
   };
   const CATEGORY_ORDER = ["imaging", "lab", "em", "procedure", "surgery"];
   const CATEGORY_LABEL = {
-    imaging: "Imaging", lab: "Lab", em: "Office & ER visits", procedure: "Procedures", surgery: "Surgery",
+    imaging: "Imaging", lab: "Lab", em: "Office & behavioral-health visits", procedure: "Procedures", surgery: "Surgery",
   };
 
   function procGroupKey(p) {
@@ -137,7 +169,7 @@
   function renderCaveat(p) {
     const base = `CPT ${p.cpt} · ${p.label}`;
     const tierNote = p.tier === 2
-      ? " · posted prices vs. Medicare CLFS national rate — not a cost estimate"
+      ? " · posted prices vs. Medicare — not a cost estimate"
       : " · facility/technical charge only (radiologist read excluded)";
     document.getElementById("caveat").textContent =
       `${base}${tierNote} · Public data with named assumptions, not audited figures.`;
@@ -195,12 +227,21 @@
     const cashVals = hospitals.map((h) => h.cash_price).filter((v) => v != null);
     const minC = cashVals.length ? Math.min(...cashVals) : null;
     const maxC = cashVals.length ? Math.max(...cashVals) : null;
+    const medSentence = (med == null)
+      ? document.createTextNode(` Medicare publishes no comparable facility rate for this code.`)
+      : null;
     headline.replaceChildren(
       document.createTextNode(`Posted prices for ${p.label} run `),
       el("strong", null, `${fmtUSD(minC)} to ${fmtUSD(maxC)}`),
-      document.createTextNode(` in cash across ${hospitals.length} hospitals. Medicare's published rate is `),
-      el("strong", null, fmtUSD(med)),
-      document.createTextNode("."),
+      document.createTextNode(` in cash across ${hospitals.length} hospitals.`),
+      ...(med == null
+        ? [medSentence]
+        : [
+            document.createTextNode(` Medicare's published rate is `),
+            el("strong", null, fmtUSD(med)),
+            document.createTextNode("."),
+          ]
+      ),
     );
 
     const tierBadge = el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate");
@@ -224,11 +265,15 @@
       });
 
     // Render the Tier-2 panel inside the chart-wrap (replacing the SVG-driven chart).
+    const basis = tier2Basis(p);
+    const medicareLine = (med == null || basis === "unavailable")
+      ? el("div", { class: "tier2-medicare dim" },
+          "No published Medicare reference for this code — posted prices are shown for context.")
+      : el("div", { class: "tier2-medicare dim" },
+          `Medicare reference: ${fmtUSD(med)} — ${medicareLabel(basis)}.`);
     const panel = el("div", { class: "tier2-panel" },
       tierBadge,
-      el("div", { class: "tier2-medicare dim" },
-        `Medicare reference: ${fmtUSD(med)} — Clinical Laboratory Fee Schedule national rate ` +
-        `(no wage adjustment, no technical/professional split).`),
+      medicareLine,
       ...rows,
     );
     const wrap = document.querySelector(".chart-wrap");
