@@ -361,8 +361,7 @@
   function regionFilter() {
     const sel = el("select", { id: "shop-region" },
       el("option", { value: "all" }, "All regions"),
-      el("option", { value: "dfw" }, "Dallas–Fort Worth"),
-      el("option", { value: "wy_ne_panhandle" }, "SE WY / NE Panhandle"),
+      ...DOC.regions.map((r) => el("option", { value: r.key }, r.label)),
     );
     sel.value = SHOP_REGION;
     sel.addEventListener("change", () => { SHOP_REGION = sel.value; render(Router.current()); });
@@ -615,33 +614,41 @@
         .attr("x", 0).attr("y", rowStart).attr("width", viewW).attr("height", 48);
     }
 
-    const stack = [
-      { key: "technologist_labor", color: "var(--c-labor)" },
-      { key: "contrast_agent", color: "var(--c-contrast)" },
-      { key: "equipment_capital", color: "var(--c-capital)" },
-      { key: "overhead", color: "var(--c-overhead)" },
-    ];
-    let runningX = x0;
-    stack.forEach(({ key, color }) => {
-      const v = h.cost_breakdown[key] || 0;
-      const w = xScale(v) - x0;
+    if (h.cost_breakdown) {
+      const stack = [
+        { key: "technologist_labor", color: "var(--c-labor)" },
+        { key: "contrast_agent", color: "var(--c-contrast)" },
+        { key: "equipment_capital", color: "var(--c-capital)" },
+        { key: "overhead", color: "var(--c-overhead)" },
+      ];
+      let runningX = x0;
+      stack.forEach(({ key, color }) => {
+        const v = h.cost_breakdown[key] || 0;
+        const w = xScale(v) - x0;
+        svg.append("rect")
+          .attr("x", runningX).attr("y", barTop)
+          .attr("width", w).attr("height", BAR_H).attr("fill", color);
+        runningX += w;
+      });
+      const grossX0 = xScale(h.gross_charge || 0);
+      if (grossX0 > runningX) {
+        svg.append("rect")
+          .attr("x", runningX).attr("y", barTop)
+          .attr("width", grossX0 - runningX).attr("height", BAR_H)
+          .attr("fill", "url(#margin-hatch)")
+          .attr("stroke", "var(--c-margin-hatch)").attr("stroke-width", 0.5);
+      }
+    } else {
+      // Breadth-only: no per-site cost model, so draw the posted (gross) price as a
+      // single neutral bar. The CCR + Medicare + cash markers below still render.
+      const grossX0 = xScale(h.gross_charge || 0);
       svg.append("rect")
-        .attr("x", runningX).attr("y", barTop)
-        .attr("width", w).attr("height", BAR_H).attr("fill", color);
-      runningX += w;
-    });
-
-    const gross = h.gross_charge || 0;
-    const grossX = xScale(gross);
-    if (grossX > runningX) {
-      svg.append("rect")
-        .attr("x", runningX).attr("y", barTop)
-        .attr("width", grossX - runningX).attr("height", BAR_H)
-        .attr("fill", "url(#margin-hatch)")
-        .attr("stroke", "var(--c-margin-hatch)").attr("stroke-width", 0.5);
+        .attr("x", x0).attr("y", barTop)
+        .attr("width", Math.max(0, grossX0 - x0)).attr("height", BAR_H)
+        .attr("fill", "var(--c-posted, #c9ced6)");
     }
 
-    if (h.estimated_cost.ccr_check != null) {
+    if (h.estimated_cost && h.estimated_cost.ccr_check != null) {
       const ccrX = xScale(h.estimated_cost.ccr_check);
       svg.append("line")
         .attr("x1", ccrX).attr("x2", ccrX)
@@ -655,7 +662,7 @@
       svg.append("polygon")
         .attr("points", `${medX},${barTop - 2} ${medX - 5},${barTop - 12} ${medX + 5},${barTop - 12}`)
         .attr("fill", "var(--c-medicare)");
-      if (h.is_critical_access) {
+      if (h.medicare_reference.basis === "cost_based") {
         svg.append("text").attr("class", "cah-label-medicare")
           .attr("x", medX + 9).attr("y", barTop - 4).text("Medicare (cost-based)");
       }
@@ -688,6 +695,8 @@
       .attr("text-anchor", "end")
       .text(tagParts.join(" · "));
 
+    const gross = h.gross_charge || 0;
+    const grossX = xScale(gross);
     if (gross > 0) {
       svg.append("text").attr("class", "gross-label")
         .attr("x", grossX + 6).attr("y", barTop + 11)
@@ -697,7 +706,7 @@
     if (h.multiples && h.multiples.cash_vs_medicare != null) {
       svg.append("text").attr("class", "row-multiple")
         .attr("x", labelRightX).attr("y", barTop + 27).attr("text-anchor", "end")
-        .text(`cash = ${fmtMult(h.multiples.cash_vs_medicare)} Medicare${h.is_critical_access ? " (cost-based)" : ""}`);
+        .text(`cash = ${fmtMult(h.multiples.cash_vs_medicare)} Medicare${h.medicare_reference.basis === "cost_based" ? " (cost-based)" : ""}`);
     }
 
     svg.append("rect")
@@ -724,7 +733,6 @@
   }
 
   function showTooltip(tip, ev, h) {
-    const cb = h.cost_breakdown;
     const fmt = fmtUSD;
     const children = [
       el("div", null, el("strong", null, h.name)),
@@ -732,16 +740,26 @@
       el("div", null, `Gross: ${fmt(h.gross_charge)} · Cash: ${fmt(h.cash_price)}`),
       el("div", null, `Negotiated: ${fmt(h.negotiated.min)} – ${fmt(h.negotiated.max)} (median ${fmt(h.negotiated.median)})`),
       el("hr"),
-      el("div", null, "Est. cost (bottom-up): ", el("strong", null, fmt(h.estimated_cost.bottom_up))),
-      el("div", { class: "dim micro" },
-        `labor ${fmt(cb.technologist_labor)} · contrast ${fmt(cb.contrast_agent)} · capital ${fmt(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmt(cb.overhead)}`),
-      el("div", null, `CCR×gross: ${fmt(h.estimated_cost.ccr_check)}` + (h.ccr.value != null ? ` (CCR ${h.ccr.value.toFixed(3)} FY${h.ccr.fy})` : "")),
+    ];
+    if (h.cost_breakdown) {
+      const cb = h.cost_breakdown;
+      children.push(
+        el("div", null, "Est. cost (bottom-up): ", el("strong", null, fmt(h.estimated_cost.bottom_up))),
+        el("div", { class: "dim micro" },
+          `labor ${fmt(cb.technologist_labor)} · contrast ${fmt(cb.contrast_agent)} · capital ${fmt(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmt(cb.overhead)}`),
+      );
+    } else {
+      children.push(el("div", { class: "dim micro" },
+        "No per-site cost model (scan volume is not publicly reported); posted price shown against CCR + Medicare."));
+    }
+    children.push(
+      el("div", null, `CCR×gross: ${fmt(h.estimated_cost && h.estimated_cost.ccr_check)}` + (h.ccr && h.ccr.value != null ? ` (CCR ${h.ccr.value.toFixed(3)} FY${h.ccr.fy})` : "")),
       el("div", null, "Medicare: ", el("strong", null, fmt(h.medicare_reference.amount)), ` (${(h.medicare_reference.basis || "").replace("_", " ")})`),
       el("hr"),
       el("div", { class: "dim micro" }, h.provenance.prices),
-      el("div", { class: "dim micro" }, h.provenance.ccr),
+      el("div", { class: "dim micro" }, h.provenance.ccr || "—"),
       el("div", { class: "dim micro" }, h.provenance.medicare),
-    ];
+    );
     if (h.medicare_reference.beneficiary_note) {
       children.push(el("div", { class: "warn micro" }, h.medicare_reference.beneficiary_note));
     }

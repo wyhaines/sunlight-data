@@ -110,13 +110,23 @@
   }
 
   function refs(h, tier2) {
-    const costs = tier2 ? [] : [h.estimated_cost.bottom_up, h.estimated_cost.ccr_check].filter((v) => v != null);
+    // breadth-only Tier-1: no bottom-up, only ccr_check (may be null)
+    const breadthImaging = !tier2 && h.cost_breakdown == null;
+    let costs;
+    if (tier2) {
+      costs = [];
+    } else if (breadthImaging) {
+      costs = [h.estimated_cost && h.estimated_cost.ccr_check].filter((v) => v != null);
+    } else {
+      costs = [h.estimated_cost.bottom_up, h.estimated_cost.ccr_check].filter((v) => v != null);
+    }
     return {
       gross: h.gross_charge,
       cash: h.cash_price,
       medicare: h.medicare_reference.amount,
       costLow: costs.length ? Math.min(...costs) : null,
       costHigh: costs.length ? Math.max(...costs) : null,
+      breadthImaging,
     };
   }
 
@@ -133,8 +143,8 @@
   // Verdict copy is tier/category-aware: labs are "tests" not "scans", and the
   // Tier-2 above_medicare line must NOT claim an estimated cost range (Tier-2
   // has no cost-to-deliver estimate — that would contradict the "not a cost
-  // estimate" stance).
-  function verdictCopy(band, p) {
+  // estimate" stance). `breadthImaging` changes above_cost copy to singular method.
+  function verdictCopy(band, p, breadthImaging) {
     const noun = p.category === "lab" ? "test"
       : p.category === "imaging" ? "scan"
       : p.category === "em" ? "visit"
@@ -142,7 +152,9 @@
     switch (band) {
       case "above_gross": return `is higher than this hospital's own full chargemaster price for this ${noun}.`;
       case "above_cash": return "is higher than this hospital's posted cash (self-pay) price.";
-      case "above_cost": return `is above the range both public-data methods estimate this ${noun} costs to deliver here.`;
+      case "above_cost": return breadthImaging
+        ? `is above the CCR-based estimate of what this ${noun} costs to deliver here.`
+        : `is above the range both public-data methods estimate this ${noun} costs to deliver here.`;
       case "above_medicare": return p.tier === 2
         ? `is above what Medicare pays for the same ${noun}.`
         : `is above what Medicare pays for the same ${noun}, though within the estimated cost range.`;
@@ -165,23 +177,37 @@
     const h = p.hospitals.find((x) => x.key === hospKey);
     const tier2 = p.tier === 2;
     const r = refs(h, tier2);
+    const { breadthImaging } = r;
     const band = classify(charged, r);
 
     const medLabel = tier2 ? `Medicare reference (${medicareShort(h.medicare_reference.basis)})` : "Medicare reference";
-    const rows = tier2
-      ? [
-          ["Posted chargemaster price", r.gross, h.provenance.prices],
-          ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
-          [medLabel, r.medicare, h.provenance.medicare],
-        ]
-      : [
-          ["Posted chargemaster price", r.gross, h.provenance.prices],
-          ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
-          ["Estimated cost to deliver (two methods)",
-            null, h.provenance.bottom_up,
-            r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
-          [medLabel, r.medicare, h.provenance.medicare],
-        ];
+    let rows;
+    if (tier2) {
+      rows = [
+        ["Posted chargemaster price", r.gross, h.provenance.prices],
+        ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+        [medLabel, r.medicare, h.provenance.medicare],
+      ];
+    } else if (breadthImaging) {
+      rows = [
+        ["Posted chargemaster price", r.gross, h.provenance.prices],
+        ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+      ];
+      if (r.costLow != null) {
+        rows.push(["Estimated cost to deliver (CCR × gross)",
+          r.costLow, h.provenance.ccr]);
+      }
+      rows.push([medLabel, r.medicare, h.provenance.medicare]);
+    } else {
+      rows = [
+        ["Posted chargemaster price", r.gross, h.provenance.prices],
+        ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+        ["Estimated cost to deliver (two methods)",
+          null, h.provenance.bottom_up,
+          r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
+        [medLabel, r.medicare, h.provenance.medicare],
+      ];
+    }
 
     // Gap analysis: a charge clearly above the whole chargemaster price for this
     // one code almost always means a second code was billed alongside it.
@@ -198,7 +224,7 @@
         : null,
       el("p", { class: "chk-verdict-line" },
         el("strong", null, fmtUSD(charged)),
-        ` ${verdictCopy(band, p)}`),
+        ` ${verdictCopy(band, p, breadthImaging)}`),
       tier2 ? el("p", { class: "micro dim" },
         r.medicare == null
           ? "Medicare publishes no comparable facility rate for this code; compared against posted prices only."

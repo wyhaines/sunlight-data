@@ -17,6 +17,7 @@
   --c-cash: #1a8a4f;
   --c-medicare: #c2382f;
   --c-ccr: #666;
+  --c-posted: #c9ced6;
 }
 
 * { box-sizing: border-box; }

@@ -16,30 +16,39 @@
     }
 
     const tier2 = p.tier === 2;
+    const breadthImaging = p.tier === 1 && h.cost_breakdown == null;   // priced + CCR + Medicare, no bottom-up
     const medRef = h.medicare_reference;
     const medUnavail = medRef.amount == null || medRef.basis === "unavailable";
 
-    const rows = tier2
-      ? [
-          ["Chargemaster (gross)", h.gross_charge, h.provenance.prices],
-          ["Cash price", h.cash_price, h.provenance.prices],
-          ["Negotiated (min / median / max)",
-            null, h.provenance.prices,
-            `${fmtUSD(h.negotiated.min)} / ${fmtUSD(h.negotiated.median)} / ${fmtUSD(h.negotiated.max)}`],
-          [medUnavail ? "Medicare reference" : `Medicare reference (${medicareShort(medRef.basis)})`,
-            medRef.amount, h.provenance.medicare,
-            medUnavail ? "no published reference" : null],
-        ]
-      : [
-          ["Chargemaster (gross)", h.gross_charge, h.provenance.prices],
-          ["Cash price", h.cash_price, h.provenance.prices],
-          ["Negotiated (min / median / max)",
-            null, h.provenance.prices,
-            `${fmtUSD(h.negotiated.min)} / ${fmtUSD(h.negotiated.median)} / ${fmtUSD(h.negotiated.max)}`],
-          ["Estimated cost — bottom-up", h.estimated_cost.bottom_up, h.provenance.bottom_up],
-          ["Estimated cost — CCR × gross", h.estimated_cost.ccr_check, h.provenance.ccr],
-          ["Medicare reference", h.medicare_reference.amount, h.provenance.medicare],
-        ];
+    const priceRows = [
+      ["Chargemaster (gross)", h.gross_charge, h.provenance.prices],
+      ["Cash price", h.cash_price, h.provenance.prices],
+      ["Negotiated (min / median / max)",
+        null, h.provenance.prices,
+        `${fmtUSD(h.negotiated.min)} / ${fmtUSD(h.negotiated.median)} / ${fmtUSD(h.negotiated.max)}`],
+    ];
+    const medRow = tier2
+      ? [medUnavail ? "Medicare reference" : `Medicare reference (${medicareShort(medRef.basis)})`,
+         medRef.amount, h.provenance.medicare, medUnavail ? "no published reference" : null]
+      : ["Medicare reference", h.medicare_reference.amount, h.provenance.medicare];
+
+    let rows;
+    if (tier2) {
+      rows = [...priceRows, medRow];
+    } else if (breadthImaging) {
+      rows = [...priceRows];
+      if (h.estimated_cost && h.estimated_cost.ccr_check != null) {
+        rows.push(["Estimated cost — CCR × gross", h.estimated_cost.ccr_check, h.provenance.ccr]);
+      }
+      rows.push(medRow);
+    } else {
+      rows = [
+        ...priceRows,
+        ["Estimated cost — bottom-up", h.estimated_cost.bottom_up, h.provenance.bottom_up],
+        ["Estimated cost — CCR × gross", h.estimated_cost.ccr_check, h.provenance.ccr],
+        medRow,
+      ];
+    }
 
     function row([label, amount, source, custom]) {
       return el("div", { class: "detail-row" },
@@ -67,17 +76,24 @@
       spreadLine = el("div", { class: "detail-breakdown dim" }, txt);
     }
 
-    const breakdown = tier2
-      ? el("div", { class: "detail-breakdown dim" },
-          "Posted prices only — Tier 2. No bottom-up cost build or CCR cross-check; " +
-          "the comparison is the hospital's posted price against Medicare's published rate.")
-      : (function () {
-          const cb = h.cost_breakdown;
-          return el("div", { class: "detail-breakdown dim" },
-            `Bottom-up components: labor ${fmtUSD(cb.technologist_labor)} · contrast ${fmtUSD(cb.contrast_agent)}` +
-            ` · capital ${fmtUSD(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmtUSD(cb.overhead)}` +
-            ` · volume ${h.scans_per_year_used}/yr`);
-        })();
+    let breakdown;
+    if (tier2) {
+      breakdown = el("div", { class: "detail-breakdown dim" },
+        "Posted prices only — Tier 2. No bottom-up cost build or CCR cross-check; " +
+        "the comparison is the hospital's posted price against Medicare's published rate.");
+    } else if (breadthImaging) {
+      breakdown = el("div", { class: "detail-breakdown dim" },
+        "No per-site bottom-up cost model — scan volume is not publicly reported for this hospital. " +
+        "We show the posted price against two independent public-data references: this hospital's " +
+        "radiology cost-to-charge ratio (CCR × gross) and Medicare's technical rate." +
+        (h.is_critical_access ? " As a Critical Access Hospital it is actually reimbursed ~101% of cost, so the OPPS figure is a benchmark, not the literal payment." : ""));
+    } else {
+      const cb = h.cost_breakdown;
+      breakdown = el("div", { class: "detail-breakdown dim" },
+        `Bottom-up components: labor ${fmtUSD(cb.technologist_labor)} · contrast ${fmtUSD(cb.contrast_agent)}` +
+        ` · capital ${fmtUSD(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmtUSD(cb.overhead)}` +
+        ` · volume ${h.scans_per_year_used}/yr`);
+    }
 
     const children = [
       el("div", { class: "detail-head" },
