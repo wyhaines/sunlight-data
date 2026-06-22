@@ -10,31 +10,17 @@
   <main class="page">
     <header class="masthead">
       <h1 class="title">ShowTheBill</h1>
-      <p class="tagline">A bill of materials for one medical procedure, built from public data.</p>
+      <p class="tagline">What should a medical procedure actually cost? Built from public data.</p>
     </header>
 
-    <section class="headline" id="headline">
-      <h2 id="headline-text">Loading…</h2>
-      <p class="caveat" id="caveat">Loading…</p>
-    </section>
+    <nav class="mode-switch" id="mode-switch"><!-- renderSwitcher fills this --></nav>
 
-    <section class="procedure-selector" id="procedure-selector"></section>
+    <section class="shop-view" id="shop-view" hidden></section>
+    <section class="bill-view" id="bill-view" hidden></section>
 
-    <section class="legend" id="legend"></section>
-
-    <section class="chart-wrap">
-      <svg id="chart" role="img" aria-label="Per-hospital comparison for the selected procedure"></svg>
-    </section>
-
-    <section class="callouts" id="callouts"></section>
-
-    <section class="same-system" id="same-system"></section>
-
-    <section class="checker" id="checker"></section>
-    <section class="detail" id="detail"></section>
-
-    <section class="methodology" id="methodology">
-      <h3>Methodology &amp; limitations</h3>
+    <footer class="footer">
+      <details class="methodology-reveal">
+        <summary>How do we know these numbers? · Methodology &amp; limitations · Sources</summary>
       <ul>
         <li>These are <strong>estimates from public data</strong>, not audited figures.</li>
         <li>Coverage spans <strong>66 codes in two tiers</strong> — <strong>64 of the 70 CMS-specified shoppable services</strong>, with 6 documented exclusions (one deleted CPT and five inpatient MS-DRG bundles). <strong>15 Tier-1 imaging codes</strong> (MRI, CT, ultrasound, X-ray, mammography) receive a full cost decomposition. <strong>51 Tier-2 codes</strong> (14 clinical-lab + 13 E&amp;M + 12 procedure + 12 surgery) show posted prices versus the Medicare published reference only. The procedure picker is grouped by category (Imaging by modality, then Lab, E&amp;M, Procedure, Surgery).</li>
@@ -49,14 +35,13 @@
         <li>Per-procedure technologist minutes and equipment capital costs for CT, ultrasound, X-ray, and mammography are <strong>labeled low-confidence assumptions</strong> (per-site scan volume for non-MRI modalities is not publicly reported). The MRI bottom-up model carries the same caveat.</li>
         <li>Some rural hospitals legitimately lack certain services — where no price appears in a hospital&#8217;s machine-readable file for a given code, we show no price rather than imputing one.</li>
         <li>The bill checker compares your amount against published prices and estimates in your browser; nothing you enter is transmitted or stored.</li>
+        <li><strong>Add-on intelligence.</strong> When a charge runs far above a procedure&#8217;s posted price, the bill checker names the most common reason from a curated map (<code>addons.yaml</code>) — e.g. color/duplex Doppler (CPT 93976/93975) billed alongside an ultrasound — and prices that add-on at the same hospital. Every add-on code carries a sourced CY2026 OPPS rate (verbatim Addendum B). We say &#8220;commonly&#8221;/&#8220;often,&#8221; never that your specific bill contains it; a code billed <em>instead of</em> the base (a pricier with-contrast scan) is shown as a variant, not flagged as an add-on.</li>
+        <li><strong>Dispute letter.</strong> From the itemized check you can generate an editable letter, pre-filled with the hospital, each code and its posted/Medicare price, the quoted-vs-charged gap, and the standard requests (itemized bill, self-pay rate, charity-care policy, Good Faith Estimate / No Surprises Act). It is assembled and downloaded entirely in your browser; for a code we have no benchmark for, it asks for an explanation rather than citing a price. A template, not legal advice.</li>
         <li><strong>Not medical or financial advice.</strong></li>
       </ul>
-    </section>
-
-    <footer class="footer">
-      <p>Every displayed number traces to a public source or a named assumption. Hover or tap any bar for citations.</p>
-      <p>Data and methodology are free to use with attribution for journalism, research, and personal use.
-         For commercial use, please get in touch first.</p>
+      </details>
+      <p>Every displayed number traces to a public source or a named assumption.</p>
+      <p>Free to use with attribution for journalism, research, and personal use. Commercial use: please get in touch.</p>
       <p>
         <a href="https://github.com/wyhaines/sunlight-data">Site &amp; data</a> ·
         Sources: hospital MRFs · CMS HCRIS · CMS OPPS · BLS OEWS
@@ -65,6 +50,7 @@
   </main>
 
   <script src="vendor/d3.v7.min.js"></script>
+  <script src="router.js"></script>
   <script src="app.js"></script>
   <script src="detail.js"></script>
   <script src="checker.js"></script>

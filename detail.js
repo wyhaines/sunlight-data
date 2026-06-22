@@ -1,23 +1,17 @@
 (function () {
   const { el, fmtUSD, fmtMult, medicareShort } = window.STB;
 
-  function parseHash() {
-    const m = location.hash.match(/^#h=([\w-]+)(?:&p=(\d{5}))?$/);
-    return m ? { key: m[1], cpt: m[2] || null } : null;
-  }
-
-  function render() {
+  function render(state) {
     const container = document.getElementById("detail");
-    const target = parseHash();
-    if (!target || !window.STB.doc) {
+    if (!container) return;
+    if (!state || state.mode === "bill" || !state.cpt || !state.hospital || !window.STB.doc) {
       container.replaceChildren();
       return;
     }
-    if (target.cpt) window.STB.setCpt(target.cpt);
-    const p = window.STB.proc;
-    const h = p.hospitals.find((x) => x.key === target.key);
+    const p = window.STB.doc.procedures[state.cpt];
+    const h = p && p.hospitals.find((x) => x.key === state.hospital);
     if (!h) {
-      container.replaceChildren(el("p", { class: "dim" }, "Unknown hospital in link."));
+      container.replaceChildren();
       return;
     }
 
@@ -102,13 +96,10 @@
     }
     container.replaceChildren(...children.filter((c) => c != null));
     container.querySelector(".detail-close").addEventListener("click", () => {
-      history.pushState(null, "", location.pathname + location.search);
-      render();
+      Router.go({ mode: "shop", cpt: state.cpt });
     });
     container.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  window.addEventListener("hashchange", render);
-  document.addEventListener("stb:procedure-changed", render);
-  window.STB.onReady.push(render);
+  document.addEventListener("stb:route-changed", (e) => render(e.detail));
 })();

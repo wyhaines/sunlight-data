@@ -61,20 +61,17 @@
     return h ? h.medicare_reference.basis : "unavailable";
   }
 
+  const DEFAULT_CPT = "70553";
   let DOC = null;
-  let CPT = "70553";
 
   window.STB = {
     el, fmtUSD, fmtMult, medicareLabel, medicareShort, tier2Basis,
+    buildProcedurePicker,
     onReady: [],
     get doc() { return DOC; },
-    get cpt() { return CPT; },
-    get proc() { return DOC ? DOC.procedures[CPT] : null; },
-    setCpt(cpt) {
-      if (!DOC || !DOC.procedures[cpt] || cpt === CPT) return;
-      CPT = cpt;
-      renderAll();
-    },
+    get cpt() { return (Router.current().cpt) || DEFAULT_CPT; },
+    get proc() { return DOC ? DOC.procedures[this.cpt] : null; },
+    setCpt(cpt) { Router.go({ mode: "shop", cpt }); },     // back-compat shim → route
   };
 
   fetch("data.json")
@@ -84,30 +81,41 @@
     })
     .then((doc) => {
       DOC = doc;
-      renderAll();
+      Router.onChange(render);
+      render(Router.current());
       window.STB.onReady.forEach((fn) => fn());
     })
     .catch((err) => {
-      document.getElementById("headline-text").textContent = "Failed to load data: " + err.message;
+      const sw = document.getElementById("mode-switch");
+      if (sw) sw.replaceChildren(el("p", { class: "warn" }, "Failed to load data: " + err.message));
       console.error(err);
     });
 
-  function renderAll() {
-    const p = window.STB.proc;
-    renderSelector();
-    renderCaveat(p);
-    if (p.tier === 2) {
-      renderTier2(p);
-    } else {
-      const view = { regions: DOC.regions, hospitals: p.hospitals, same_system: p.same_system, label: p.label, cpt: p.cpt };
-      renderHeadline(view);
-      renderLegend();
-      renderChart(view);
-      renderCallouts(view);
-      renderSameSystem(view);
-    }
-    document.dispatchEvent(new CustomEvent("stb:procedure-changed"));
+  // ---- Orchestrator: switcher + mode dispatch -----------------------------
+
+  function render(state) {
+    renderSwitcher(state.mode);
+    const shop = document.getElementById("shop-view");
+    const bill = document.getElementById("bill-view");
+    const isShop = state.mode !== "bill";
+    shop.hidden = !isShop;
+    bill.hidden = isShop;
+    if (isShop) renderShop(state);
+    else document.dispatchEvent(new CustomEvent("stb:bill-mode", { detail: state }));
+    document.dispatchEvent(new CustomEvent("stb:route-changed", { detail: state }));
   }
+
+  function renderSwitcher(mode) {
+    function btn(m, label) {
+      const active = m === (mode === "bill" ? "bill" : "shop");
+      const b = el("button", { class: "mode-btn" + (active ? " active" : ""), type: "button" }, label);
+      b.addEventListener("click", () => Router.go({ mode: m, cpt: Router.current().cpt || null }));
+      return b;
+    }
+    document.getElementById("mode-switch").replaceChildren(btn("shop", "Shop prices"), btn("bill", "Check a bill"));
+  }
+
+  // ---- Procedure selector (category-grouped, router-driven) ---------------
 
   const MODALITY_ORDER = ["mri", "ct", "ultrasound", "xray", "mammography"];
   const MODALITY_LABEL = {
@@ -134,150 +142,258 @@
     return MODALITY_LABEL[key] || CATEGORY_LABEL[key] || key;
   }
 
-  function renderSelector() {
-    const procs = Object.values(DOC.procedures);
-    const groups = new Map();
-    procs.forEach((p) => {
-      const key = procGroupKey(p);
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(p);
+  // Everyday-language synonyms → a predicate over the procedure. Lets people
+  // search the words they actually use ("mammogram" for Mammography, "sonogram"
+  // for ultrasound, "EKG" for ECG) even when our canonical label differs. A
+  // synonym fires when the typed query is a prefix/substring of (or contains)
+  // the synonym term, so partial typing still matches. Extend freely.
+  const SYNONYMS = [
+    { terms: ["mammogram"], test: (p) => p.modality === "mammography" },
+    { terms: ["sonogram", "ultrasound", "ultra sound"], test: (p) => p.modality === "ultrasound" },
+    { terms: ["cat scan", "ct scan"], test: (p) => p.modality === "ct" },
+    { terms: ["x-ray", "x ray", "xray"], test: (p) => p.modality === "xray" },
+    { terms: ["ekg", "heart tracing"], test: (p) => p.cpt === "93000" },
+    { terms: ["bloodwork", "blood work", "blood test", "labs"], test: (p) => p.category === "lab" },
+    { terms: ["scope"], test: (p) => /scopy|endoscop/.test(p.label.toLowerCase()) },
+  ];
+
+  function pickableProcs() {
+    return Object.values(DOC.procedures).filter((p) => p.addon_only !== true);
+  }
+
+  function matchesQuery(p, q) {
+    if (p.label.toLowerCase().includes(q) || p.cpt.includes(q)) return true;
+    return SYNONYMS.some((s) =>
+      s.test(p) && s.terms.some((t) => t.includes(q) || q.includes(t)));
+  }
+
+  function procCatTag(p) {
+    return groupLabel(procGroupKey(p));   // e.g. "MRI", "Lab", "Surgery"
+  }
+
+  // Shared search-first procedure picker, used by both Shop and Check-a-bill.
+  // Returns a self-contained <div class="proc-picker">. Selecting a procedure
+  // calls onSelect(cpt); the caller is responsible for re-rendering its view.
+  function buildProcedurePicker({ selectedCpt, onSelect, mode }) {
+    const placeholder = "Search a procedure or code — e.g. mammogram, 76830";
+    const input = el("input", {
+      class: "picker-input", type: "search", autocomplete: "off",
+      placeholder, "aria-label": "Search procedures",
     });
-    const orderedKeys = [...groups.keys()].sort((a, b) => {
-      const ra = groupRank(a), rb = groupRank(b);
-      return ra[0] - rb[0] || ra[1] - rb[1] || a.localeCompare(b);
-    });
-    const blocks = orderedKeys.map((key) => {
-      const tabs = groups.get(key)
-        .sort((a, b) => a.cpt.localeCompare(b.cpt))
-        .map((p) => {
-          const b = el("button", {
-            class: "proc-tab" + (p.cpt === CPT ? " active" : ""),
-            type: "button",
-            "data-cpt": p.cpt,
-          }, `${p.label} (CPT ${p.cpt})`);
-          b.addEventListener("click", () => window.STB.setCpt(p.cpt));
-          return b;
-        });
-      return el("div", { class: "proc-group" },
-        el("div", { class: "proc-group-label" }, groupLabel(key)),
-        el("div", { class: "proc-group-tabs" }, ...tabs),
-      );
-    });
-    document.getElementById("procedure-selector").replaceChildren(...blocks);
-  }
+    const results = el("ul", { class: "picker-results", hidden: "" });
+    const cat = el("div", { class: "picker-cat" });
+    let openCat = null;   // which browse category is currently expanded
 
-  function renderCaveat(p) {
-    const base = `CPT ${p.cpt} · ${p.label}`;
-    const tierNote = p.tier === 2
-      ? " · posted prices vs. Medicare — not a cost estimate"
-      : " · facility/technical charge only (radiologist read excluded)";
-    document.getElementById("caveat").textContent =
-      `${base}${tierNote} · Public data with named assumptions, not audited figures.`;
-  }
+    function pick(cpt) { onSelect(cpt); }
 
-  function renderHeadline(view) {
-    const hospitals = view.hospitals.filter((h) => h.gross_charge != null);
-    const minG = d3.min(hospitals, (h) => h.gross_charge);
-    const maxG = d3.max(hospitals, (h) => h.gross_charge);
-    const minE = d3.min(hospitals, (h) => h.estimated_cost.bottom_up);
-    const maxE = d3.max(hospitals, (h) => h.estimated_cost.bottom_up);
-    const h2 = document.getElementById("headline-text");
-    h2.replaceChildren(
-      document.createTextNode("The same scan (" + view.label + ") is charged "),
-      el("strong", null, `${fmtUSD(minG)} to ${fmtUSD(maxG)}`),
-      document.createTextNode(` across ${hospitals.length} hospitals in Texas and Wyoming. We estimate it costs them about `),
-      el("strong", null, `${fmtUSD(minE)} to ${fmtUSD(maxE)}`),
-      document.createTextNode(" to perform."),
-    );
-  }
-
-  function renderLegend() {
-    function swatch(color, border) {
-      return el("span", {
-        class: "legend-swatch",
-        style: `background:${color}${border ? "; border:" + border : ""}`,
-      });
-    }
-    function legendItem(marker, label) {
-      return el("span", { class: "legend-item" }, marker, " ", label);
-    }
-    const items = [
-      legendItem(swatch("var(--c-labor)"), "Tech labor"),
-      legendItem(swatch("var(--c-contrast)"), "Contrast agent"),
-      legendItem(swatch("var(--c-capital)"), "Capital (scanner + facility)"),
-      legendItem(swatch("var(--c-overhead)"), "Overhead"),
-      legendItem(swatch("var(--c-margin)", "1px solid var(--c-margin-hatch)"), "Margin (charge − cost)"),
-      legendItem(el("span", { class: "legend-dashed" }), "CCR × gross cross-check"),
-      legendItem(el("span", { class: "legend-circle" }), "Cash price (above bar)"),
-      legendItem(el("span", { class: "legend-triangle" }), "Medicare reference (above bar)"),
-    ];
-    document.getElementById("legend").replaceChildren(...items);
-  }
-
-  function renderTier2(p) {
-    // Tier-2 reuses the chart container region for its table; clear Tier-1-only sections.
-    document.getElementById("legend").replaceChildren();
-    document.getElementById("callouts").replaceChildren();
-    document.getElementById("same-system").replaceChildren();
-
-    const hospitals = p.hospitals.filter((h) => h.gross_charge != null || h.cash_price != null);
-    const med = p.medicare_national_usd;
-
-    const headline = document.getElementById("headline-text");
-    const cashVals = hospitals.map((h) => h.cash_price).filter((v) => v != null);
-    const minC = cashVals.length ? Math.min(...cashVals) : null;
-    const maxC = cashVals.length ? Math.max(...cashVals) : null;
-    const medSentence = (med == null)
-      ? document.createTextNode(` Medicare publishes no comparable facility rate for this code.`)
-      : null;
-    headline.replaceChildren(
-      document.createTextNode(`Posted prices for ${p.label} run `),
-      el("strong", null, `${fmtUSD(minC)} to ${fmtUSD(maxC)}`),
-      document.createTextNode(` in cash across ${hospitals.length} hospitals.`),
-      ...(med == null
-        ? [medSentence]
-        : [
-            document.createTextNode(` Medicare's published rate is `),
-            el("strong", null, fmtUSD(med)),
-            document.createTextNode("."),
-          ]
-      ),
-    );
-
-    const tierBadge = el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate");
-
-    const rows = hospitals
-      .slice()
-      .sort((a, b) => (b.cash_price || b.gross_charge || 0) - (a.cash_price || a.gross_charge || 0))
-      .map((h) => {
-        const mult = h.multiples && h.multiples.cash_vs_medicare;
-        return el("div", { class: "tier2-row" + (h.is_critical_access ? " cah" : "") },
-          el("div", { class: "tier2-name" },
-            el("span", null, h.name),
-            el("span", { class: "tier2-tag dim micro" }, tier2Tag(h)),
-          ),
-          el("div", { class: "tier2-prices" },
-            `gross ${fmtUSD(h.gross_charge)} · cash ${fmtUSD(h.cash_price)} · negotiated ` +
-            `${fmtUSD(h.negotiated.min)}–${fmtUSD(h.negotiated.max)}` + postedSpreadNote(h)),
-          el("div", { class: "tier2-mult" },
-            mult != null ? `cash = ${fmtMult(mult)} Medicare` : "no posted price"),
+    function renderResults() {
+      const q = input.value.trim().toLowerCase();
+      if (!q) { results.hidden = true; results.replaceChildren(); return; }
+      const matches = pickableProcs().filter((p) => matchesQuery(p, q)).slice(0, 10);
+      if (matches.length === 0) {
+        results.hidden = false;
+        results.replaceChildren(el("li", { class: "picker-empty dim" }, "No matching procedures."));
+        return;
+      }
+      results.hidden = false;
+      results.replaceChildren(...matches.map((p, i) => {
+        const li = el("li", { class: "picker-result" + (i === 0 ? " first" : ""), "data-cpt": p.cpt },
+          el("span", { class: "picker-result-label" }, `${p.label} (CPT ${p.cpt})`),
+          el("span", { class: "picker-result-tag dim micro" }, procCatTag(p)),
         );
-      });
+        li.addEventListener("click", () => pick(p.cpt));
+        return li;
+      }));
+    }
 
-    // Render the Tier-2 panel inside the chart-wrap (replacing the SVG-driven chart).
-    const basis = tier2Basis(p);
-    const medicareLine = (med == null || basis === "unavailable")
-      ? el("div", { class: "tier2-medicare dim" },
-          "No published Medicare reference for this code — posted prices are shown for context.")
-      : el("div", { class: "tier2-medicare dim" },
-          `Medicare reference: ${fmtUSD(med)} — ${medicareLabel(basis)}.`);
-    const panel = el("div", { class: "tier2-panel" },
-      tierBadge,
-      medicareLine,
-      ...rows,
+    // Enter selects the first match (low-effort keyboard win).
+    input.addEventListener("input", renderResults);
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter") return;
+      const q = input.value.trim().toLowerCase();
+      if (!q) return;
+      const first = pickableProcs().filter((p) => matchesQuery(p, q))[0];
+      if (first) { ev.preventDefault(); pick(first.cpt); }
+    });
+
+    // Browse-by-category: expand one category at a time, reusing the grouping
+    // helpers. Imaging is sub-grouped by modality.
+    function categoryProcsGrouped(catKey) {
+      const procs = pickableProcs().filter((p) => (p.category || "other") === catKey);
+      const groups = new Map();
+      procs.forEach((p) => {
+        const key = procGroupKey(p);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+      });
+      const orderedKeys = [...groups.keys()].sort((a, b) => {
+        const ra = groupRank(a), rb = groupRank(b);
+        return ra[0] - rb[0] || ra[1] - rb[1] || a.localeCompare(b);
+      });
+      return orderedKeys.map((key) => ({ key, procs: groups.get(key).sort((a, b) => a.cpt.localeCompare(b.cpt)) }));
+    }
+
+    function renderCat() {
+      if (!openCat) { cat.replaceChildren(); return; }
+      const blocks = categoryProcsGrouped(openCat).map(({ key, procs }) =>
+        el("div", { class: "picker-cat-group" },
+          // Only show a sub-label when it differs from the category (i.e. imaging modalities).
+          key === openCat ? null : el("div", { class: "picker-cat-sublabel" }, groupLabel(key)),
+          el("div", { class: "picker-cat-items" },
+            ...procs.map((p) => {
+              const b = el("button", { class: "picker-cat-item" + (p.cpt === selectedCpt ? " active" : ""), type: "button", "data-cpt": p.cpt },
+                `${p.label} (CPT ${p.cpt})`);
+              b.addEventListener("click", () => pick(p.cpt));
+              return b;
+            }),
+          ),
+        ));
+      cat.replaceChildren(...blocks);
+    }
+
+    const browseButtons = CATEGORY_ORDER.map((catKey) => {
+      const b = el("button", { class: "picker-browse-btn", type: "button", "data-cat": catKey }, CATEGORY_LABEL[catKey]);
+      b.addEventListener("click", () => {
+        openCat = openCat === catKey ? null : catKey;   // toggle: same button collapses
+        for (const sib of browse.querySelectorAll(".picker-browse-btn")) {
+          sib.classList.toggle("active", sib.getAttribute("data-cat") === openCat);
+        }
+        renderCat();
+      });
+      return b;
+    });
+    const browse = el("div", { class: "picker-browse" },
+      el("span", { class: "picker-browse-label dim" }, "or browse:"),
+      ...browseButtons,
     );
-    const wrap = document.querySelector(".chart-wrap");
-    wrap.replaceChildren(panel);
+
+    const search = el("div", { class: "picker-search" }, input, results, browse, cat);
+
+    // Current-selection summary + Change (shown when a procedure is selected).
+    const picker = el("div", { class: "proc-picker", "data-mode": mode || "shop" });
+    if (selectedCpt && DOC.procedures[selectedCpt]) {
+      const p = DOC.procedures[selectedCpt];
+      search.hidden = true;
+      const change = el("button", { class: "picker-change", type: "button" }, "Change");
+      change.addEventListener("click", () => {
+        current.hidden = true;
+        search.hidden = false;
+        input.focus();
+      });
+      const current = el("div", { class: "picker-current" },
+        el("span", { class: "picker-current-label" }, `Selected: ${p.label} (CPT ${p.cpt})`),
+        change,
+      );
+      picker.appendChild(current);
+      picker.appendChild(search);
+    } else {
+      picker.appendChild(search);
+    }
+    return picker;
+  }
+
+  function buildSelector(state) {
+    return buildProcedurePicker({
+      selectedCpt: state.cpt,
+      onSelect: (cpt) => Router.go({ mode: "shop", cpt }),
+      mode: "shop",
+    });
+  }
+
+  // ---- Unified Shop comparison --------------------------------------------
+
+  let SHOP_REGION = "all", SHOP_SORT = "cheapest";
+
+  function renderShop(state) {
+    const view = document.getElementById("shop-view");
+    const cpt = state.cpt;
+    if (!cpt || !DOC.procedures[cpt]) {            // no procedure chosen yet
+      view.replaceChildren(
+        buildSelector(state),
+        el("p", { class: "dim shop-empty" }, "Pick a procedure to compare prices."),
+      );
+      return;
+    }
+    const p = DOC.procedures[cpt];
+    const hospitals = p.hospitals.filter((h) => SHOP_REGION === "all" || h.region === SHOP_REGION);
+    const priced = hospitals.filter((h) => h.cash_price != null);
+    const maxCash = priced.length ? Math.max(...priced.map((h) => h.cash_price)) : 0;
+    const ordered = hospitals.slice().sort(shopComparator);
+
+    const med = p.medicare_national_usd;
+    view.replaceChildren(
+      buildSelector(state),
+      el("div", { class: "shop-controls" }, regionFilter(), sortControl(), copyLink()),
+      med != null
+        ? el("p", { class: "shop-anchor" }, `Medicare pays about ${fmtUSD(med)} for this.`)
+        : el("p", { class: "shop-anchor dim" }, "Medicare publishes no comparable facility rate for this code."),
+      el("div", { class: "shop-list" }, ...ordered.map((h) => shopRow(p, h, maxCash))),
+      fairReveal(p),
+      el("div", { id: "detail", class: "detail" }),   // detail.js fills when state.hospital set
+    );
+    if (state.hospital) document.dispatchEvent(new CustomEvent("stb:route-changed", { detail: state }));
+  }
+
+  function shopComparator(a, b) {
+    const av = a.cash_price, bv = b.cash_price;
+    if (av == null) return 1;
+    if (bv == null) return -1;                                    // unpriced last
+    return SHOP_SORT === "priciest" ? bv - av : av - bv;          // default cheapest-first
+  }
+
+  function shopRow(p, h, maxCash) {
+    const cash = h.cash_price;
+    const mult = h.multiples && h.multiples.cash_vs_medicare;
+    const pct = (cash != null && maxCash) ? Math.max(3, Math.round(100 * cash / maxCash)) : 0;
+    const row = el("button", { class: "shop-row" + (h.is_critical_access ? " cah" : ""), type: "button" },
+      el("div", { class: "shop-name" },
+        el("span", null, h.name),
+        el("span", { class: "shop-tags dim micro" }, tier2Tag(h)),
+      ),
+      el("div", { class: "shop-price" }, cash != null ? fmtUSD(cash) : el("span", { class: "dim" }, "no posted price")),
+      el("div", { class: "shop-mult dim micro" }, mult != null ? `${fmtMult(mult)} Medicare` : ""),
+      el("div", { class: "shop-bar" }, el("span", { class: "shop-bar-fill", style: `width:${pct}%` })),
+    );
+    row.addEventListener("click", () => Router.go({ mode: "shop", cpt: p.cpt, hospital: h.key }));
+    return row;
+  }
+
+  function regionFilter() {
+    const sel = el("select", { id: "shop-region" },
+      el("option", { value: "all" }, "All regions"),
+      el("option", { value: "dfw" }, "Dallas–Fort Worth"),
+      el("option", { value: "wy_ne_panhandle" }, "SE WY / NE Panhandle"),
+    );
+    sel.value = SHOP_REGION;
+    sel.addEventListener("change", () => { SHOP_REGION = sel.value; render(Router.current()); });
+    return el("label", null, "Region ", sel);
+  }
+
+  function sortControl() {
+    const sel = el("select", { id: "shop-sort" },
+      el("option", { value: "cheapest" }, "Cheapest first"),
+      el("option", { value: "priciest" }, "Priciest first"),
+    );
+    sel.value = SHOP_SORT;
+    sel.addEventListener("change", () => { SHOP_SORT = sel.value; render(Router.current()); });
+    return el("label", null, "Sort ", sel);
+  }
+
+  function copyLink() {
+    const btn = el("button", { class: "shop-copy", type: "button" }, "Copy link");
+    btn.addEventListener("click", () => {
+      const url = location.origin + location.pathname + Router.toHash(Router.current());
+      const flash = () => {
+        btn.textContent = "Copied!";
+        setTimeout(() => { btn.textContent = "Copy link"; }, 1400);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(flash, flash);
+      } else {
+        flash();
+      }
+    });
+    return btn;
   }
 
   function tier2Tag(h) {
@@ -299,6 +415,101 @@
     const range = ps.gross_max > ps.gross_min ? `, ${fmtUSD(ps.gross_min)}–${fmtUSD(ps.gross_max)}` : "";
     return ` · ${ps.n_items} items${range}`;
   }
+
+  // ---- "Is this fair?" reveal (relocated convergence chart / Tier-2 reasoning) ----
+
+  function fairReveal(p) {
+    const body = el("div", { class: "fair-body" });
+    const d = el("details", { class: "fair-reveal" },
+      el("summary", null, "How do we know what it should cost?"),
+      body);
+    d.addEventListener("toggle", () => {
+      if (!d.open || body.dataset.built) return;
+      body.dataset.built = "1";
+      if (p.tier === 1) {
+        const wrap = el("div", { class: "chart-wrap" });             // renderChart expects .chart-wrap
+        body.replaceChildren(
+          buildLegend(),
+          wrap,
+          el("div", { id: "callouts", class: "callouts" }),
+          el("div", { id: "same-system", class: "same-system" }),
+        );
+        const view = { regions: DOC.regions, hospitals: p.hospitals, same_system: p.same_system, label: p.label, cpt: p.cpt };
+        renderChart(view);
+        renderCallouts(view);
+        renderSameSystem(view);
+      } else {
+        body.replaceChildren(tier2Reasoning(p));
+      }
+    });
+    return d;
+  }
+
+  function buildLegend() {
+    function swatch(color, border) {
+      return el("span", {
+        class: "legend-swatch",
+        style: `background:${color}${border ? "; border:" + border : ""}`,
+      });
+    }
+    function legendItem(marker, label) {
+      return el("span", { class: "legend-item" }, marker, " ", label);
+    }
+    const items = [
+      legendItem(swatch("var(--c-labor)"), "Tech labor"),
+      legendItem(swatch("var(--c-contrast)"), "Contrast agent"),
+      legendItem(swatch("var(--c-capital)"), "Capital (scanner + facility)"),
+      legendItem(swatch("var(--c-overhead)"), "Overhead"),
+      legendItem(swatch("var(--c-margin)", "1px solid var(--c-margin-hatch)"), "Margin (charge − cost)"),
+      legendItem(el("span", { class: "legend-dashed" }), "CCR × gross cross-check"),
+      legendItem(el("span", { class: "legend-circle" }), "Cash price (above bar)"),
+      legendItem(el("span", { class: "legend-triangle" }), "Medicare reference (above bar)"),
+    ];
+    return el("div", { class: "legend" }, ...items);
+  }
+
+  // Tier-2 posted-price-vs-Medicare reasoning for the reveal: the per-hospital
+  // × Medicare framing + the basis label + the "not a cost estimate" note.
+  function tier2Reasoning(p) {
+    const basis = tier2Basis(p);
+    const med = p.medicare_national_usd;
+    const hospitals = p.hospitals.filter((h) => h.gross_charge != null || h.cash_price != null);
+
+    const medLine = (med == null || basis === "unavailable")
+      ? el("div", { class: "tier2-medicare dim" },
+          "No published Medicare reference for this code — posted prices are shown for context.")
+      : el("div", { class: "tier2-medicare dim" },
+          `Medicare reference: ${fmtUSD(med)} — ${medicareLabel(basis)}.`);
+
+    const rows = hospitals
+      .slice()
+      .sort((a, b) => (b.cash_price || b.gross_charge || 0) - (a.cash_price || a.gross_charge || 0))
+      .map((h) => {
+        const mult = h.multiples && h.multiples.cash_vs_medicare;
+        return el("div", { class: "tier2-row" + (h.is_critical_access ? " cah" : "") },
+          el("div", { class: "tier2-name" },
+            el("span", null, h.name),
+            el("span", { class: "tier2-tag dim micro" }, tier2Tag(h)),
+          ),
+          el("div", { class: "tier2-prices" },
+            `gross ${fmtUSD(h.gross_charge)} · cash ${fmtUSD(h.cash_price)} · negotiated ` +
+            `${fmtUSD(h.negotiated.min)}–${fmtUSD(h.negotiated.max)}` + postedSpreadNote(h)),
+          el("div", { class: "tier2-mult" },
+            mult != null ? `cash = ${fmtMult(mult)} Medicare` : "no posted price"),
+        );
+      });
+
+    return el("div", { class: "tier2-panel" },
+      el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate"),
+      el("p", { class: "dim" },
+        "Tier-2 codes carry posted prices versus Medicare's published rate only — we do not decompose a " +
+        "cost to deliver. The comparison below is each hospital's posted price against that Medicare reference."),
+      medLine,
+      ...rows,
+    );
+  }
+
+  // ---- Convergence chart (Tier-1) — content of the reveal -----------------
 
   function renderChart(view) {
     const wrap = document.querySelector(".chart-wrap");
@@ -495,7 +706,7 @@
       .on("mouseenter", function (ev) { showTooltip(tooltip, ev, h); })
       .on("mousemove", function (ev) { moveTooltip(tooltip, ev); })
       .on("mouseleave", function () { hideTooltip(tooltip); })
-      .on("click", () => { location.hash = "h=" + h.key + "&p=" + window.STB.cpt; });
+      .on("click", () => { Router.go({ mode: "shop", cpt: window.STB.cpt, hospital: h.key }); });
   }
 
   function ownershipTag(h) {
