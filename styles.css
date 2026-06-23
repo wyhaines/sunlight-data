@@ -305,3 +305,27 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 @media (max-width: 720px) {
   .iline { grid-template-columns: 1fr 1fr 36px; }
 }
+
+.anchor-control { margin: 8px 0; }
+.anchor-control .anchor-pin { margin-right: 4px; }
+.anchor-current { font-weight: 600; }
+.anchor-change { margin-left: 8px; font-size: 12px; }
+.picker-group { padding: 4px 8px 0; text-transform: uppercase; letter-spacing: .04em; }
+
+/* Relevance-tier shop view (Task 7) */
+.shop-tier-head { font-weight: 600; margin: 14px 0 6px; }
+.shop-row { display: flex; align-items: center; gap: 6px; }
+.shop-rowbtn { flex: 1; display: grid; grid-template-columns: 2fr 1fr 1fr 2fr; align-items: center; gap: 8px; background: none; border: 0; text-align: left; cursor: pointer; padding: 6px 4px; }
+.shop-showmore, .shop-neighbors-toggle { margin: 6px 0; background: none; border: 0; color: var(--link, #2b6cb0); cursor: pointer; font-size: 13px; }
+.shop-dist { white-space: nowrap; }
+.compare-pin-slot { display: inline-block; width: 24px; flex-shrink: 0; }
+
+/* Compare set + worth-the-travel (Task 8) */
+.compare-pin { width: 22px; height: 22px; border: 1px solid #ccc; border-radius: 4px; background: #fff; cursor: pointer; }
+.compare-pin.on { background: var(--c-cash, #2b6cb0); color: #fff; border-color: transparent; }
+.compare-panel { border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; margin: 10px 0; background: #f8fafc; }
+.compare-head { display: flex; justify-content: space-between; align-items: center; }
+.compare-row { display: grid; grid-template-columns: 2fr 1fr 2fr auto; gap: 8px; align-items: center; padding: 3px 0; }
+.wtt-callout { border: 1px solid #f6c560; background: #fffaf0; border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
+.wtt-head { font-weight: 700; }
+.wtt-add, .compare-clear, .compare-remove { background: none; border: 0; color: var(--link, #2b6cb0); cursor: pointer; }

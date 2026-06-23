@@ -72,6 +72,7 @@
     get cpt() { return (Router.current().cpt) || DEFAULT_CPT; },
     get proc() { return DOC ? DOC.procedures[this.cpt] : null; },
     setCpt(cpt) { Router.go({ mode: "shop", cpt }); },     // back-compat shim → route
+    rerender() { render(Router.current()); },
   };
 
   fetch("data.json")
@@ -300,9 +301,85 @@
     });
   }
 
+  // Unified "where are you" control: one search box matching hospitals AND
+  // towns/ZIPs. Selection writes the anchor (localStorage) and re-renders.
+  function buildAnchorControl() {
+    const anchor = STBAnchor.get();
+    const wrap = el("div", { class: "anchor-control" });
+
+    if (anchor) {
+      const change = el("button", { class: "anchor-change", type: "button" }, "Change");
+      change.addEventListener("click", () => { STBAnchor.clear(); STB.rerender(); });
+      wrap.replaceChildren(
+        el("span", { class: "anchor-pin" }, "📍"),
+        el("span", { class: "anchor-current" }, `Near ${anchor.label}`),
+        change,
+      );
+      return wrap;
+    }
+
+    const input = el("input", {
+      class: "picker-input anchor-input", type: "search", autocomplete: "off",
+      placeholder: "Where are you? — a hospital, town, or ZIP", "aria-label": "Set your location",
+    });
+    const results = el("ul", { class: "picker-results", hidden: "" });
+
+    function choosePlace(p) { STBAnchor.set({ lat: p.lat, lng: p.lng, state: p.state, label: p.label, source: "place" }); STB.rerender(); }
+    function chooseHospital(h) { STBAnchor.set({ lat: h.lat, lng: h.lng, state: h.state, label: `${h.name} (${h.city}, ${h.state})`, source: "hospital" }); STB.rerender(); }
+
+    function renderResults(places) {
+      const q = input.value.trim();
+      if (!q) { results.hidden = true; results.replaceChildren(); return; }
+      const hospitals = (DOC.procedures[STB.cpt] ? DOC.procedures[STB.cpt].hospitals : [])
+        .filter((h) => h.lat != null);
+      const r = STBRelevance.searchAnchorCandidates(q, { hospitals, places: places || { zips: {}, towns: [] } });
+      const items = [];
+      if (r.hospitals.length) {
+        items.push(el("li", { class: "picker-group dim micro" }, "Hospitals"));
+        r.hospitals.forEach((h) => {
+          const li = el("li", { class: "picker-result" }, `${h.name} — ${h.city}, ${h.state}`);
+          li.addEventListener("click", () => chooseHospital(h));
+          items.push(li);
+        });
+      }
+      if (r.places.length) {
+        items.push(el("li", { class: "picker-group dim micro" }, "Towns / ZIPs"));
+        r.places.forEach((p) => {
+          const li = el("li", { class: "picker-result" }, p.label);
+          li.addEventListener("click", () => choosePlace(p));
+          items.push(li);
+        });
+      }
+      if (!items.length) items.push(el("li", { class: "picker-empty dim" }, "No match — try a hospital name or a nearby town."));
+      results.hidden = false;
+      results.replaceChildren(...items);
+    }
+
+    let placesDoc = null;
+    input.addEventListener("focus", () => { STBAnchor.loadPlaces().then((d) => { placesDoc = d; renderResults(placesDoc); }); });
+    input.addEventListener("input", () => renderResults(placesDoc));
+
+    wrap.replaceChildren(el("div", { class: "picker-search" }, input, results));
+    return wrap;
+  }
+
   // ---- Unified Shop comparison --------------------------------------------
 
   let SHOP_REGION = "all", SHOP_SORT = "cheapest";
+  let SHOP_SHOW_ALL = false, SHOP_INCLUDE_NEIGHBORS = false;
+
+  function fmtDistance(mi) {
+    if (mi == null) return "";
+    if (mi < 1) return "in town";
+    if (mi < 100) return `≈${Math.round(mi)} mi`;
+    return `≈${Math.round(mi / 5) * 5} mi`;
+  }
+
+  function stateLabel(code) {
+    const r = (DOC.regions || []).find((x) => x.key === "wyoming");
+    return { WY: "Wyoming", TX: "Texas", NE: "Nebraska", CO: "Colorado", UT: "Utah",
+             MT: "Montana", SD: "South Dakota", ID: "Idaho" }[code] || code;
+  }
 
   function renderShop(state) {
     const view = document.getElementById("shop-view");
@@ -310,27 +387,87 @@
     if (!cpt || !DOC.procedures[cpt]) {            // no procedure chosen yet
       view.replaceChildren(
         buildSelector(state),
+        buildAnchorControl(),
         el("p", { class: "dim shop-empty" }, "Pick a procedure to compare prices."),
       );
       return;
     }
     const p = DOC.procedures[cpt];
-    const hospitals = p.hospitals.filter((h) => SHOP_REGION === "all" || h.region === SHOP_REGION);
-    const priced = hospitals.filter((h) => h.cash_price != null);
-    const maxCash = priced.length ? Math.max(...priced.map((h) => h.cash_price)) : 0;
-    const ordered = hospitals.slice().sort(shopComparator);
-
+    const anchor = STBAnchor.get();
     const med = p.medicare_national_usd;
-    view.replaceChildren(
-      buildSelector(state),
-      el("div", { class: "shop-controls" }, regionFilter(), sortControl(), copyLink()),
-      med != null
-        ? el("p", { class: "shop-anchor" }, `Medicare pays about ${fmtUSD(med)} for this.`)
-        : el("p", { class: "shop-anchor dim" }, "Medicare publishes no comparable facility rate for this code."),
-      el("div", { class: "shop-list" }, ...ordered.map((h) => shopRow(p, h, maxCash))),
+    const anchorEl = buildAnchorControl();
+    const medEl = med != null
+      ? el("p", { class: "shop-anchor" }, `Medicare pays about ${fmtUSD(med)} for this.`)
+      : el("p", { class: "shop-anchor dim" }, "Medicare publishes no comparable facility rate for this code.");
+
+    if (!anchor || anchor.lat == null) {
+      // No anchor → existing flat region-filtered list.
+      const hospitals = p.hospitals.filter((h) => SHOP_REGION === "all" || h.region === SHOP_REGION);
+      const priced = hospitals.filter((h) => h.cash_price != null);
+      const maxCash = priced.length ? Math.max(...priced.map((h) => h.cash_price)) : 0;
+      const ordered = hospitals.slice().sort(shopComparator);
+      const children = [
+        buildSelector(state), anchorEl,
+        el("div", { class: "shop-controls" }, regionFilter(), sortControl(), copyLink()),
+        medEl,
+        comparePanel(p),
+        el("div", { class: "shop-list" }, ...ordered.map((h) => shopRow(p, h, maxCash))),
+        fairReveal(p),
+        el("div", { id: "detail", class: "detail" }),
+      ];
+      view.replaceChildren(...children.filter(Boolean));
+      if (state.hospital) document.dispatchEvent(new CustomEvent("stb:route-changed", { detail: state }));
+      return;
+    }
+
+    // Anchored → relevance tiers.
+    const withDist = STBRelevance.withDistance(p.hospitals, anchor);
+    const maxCash = (() => {
+      const priced = withDist.filter((h) => h.cash_price != null);
+      return priced.length ? Math.max(...priced.map((h) => h.cash_price)) : 0;
+    })();
+    const { inState, outState } = STBRelevance.partitionByState(withDist, anchor.state);
+    const inNear = STBRelevance.nearest(inState);
+    const shown = SHOP_SHOW_ALL ? inNear : inNear.slice(0, STBRelevance.CONST.NEAR_VISIBLE_COUNT);
+    const hiddenCount = inNear.length - shown.length;
+
+    const sections = [
+      el("div", { class: "shop-tier-head" }, `Near you · ${stateLabel(anchor.state)}`),
+      el("div", { class: "shop-list" }, ...shown.map((h) => shopRow(p, h, maxCash))),
+    ];
+    if (hiddenCount > 0 || SHOP_SHOW_ALL) {
+      const toggle = el("button", { class: "shop-showmore", type: "button" },
+        SHOP_SHOW_ALL ? "Show fewer" : `Show all ${inNear.length} in ${stateLabel(anchor.state)}`);
+      toggle.addEventListener("click", () => { SHOP_SHOW_ALL = !SHOP_SHOW_ALL; STB.rerender(); });
+      sections.push(toggle);
+    }
+
+    const neighbors = STBRelevance.neighboringStates(anchor.state);
+    const neighborHosps = STBRelevance.nearest(outState.filter((h) => neighbors.indexOf((h.state || "").toUpperCase()) >= 0));
+    if (neighborHosps.length) {
+      const tog = el("button", { class: "shop-neighbors-toggle", type: "button" },
+        SHOP_INCLUDE_NEIGHBORS ? "Hide neighboring states" : `＋ include neighboring states (${neighborHosps.length})`);
+      tog.addEventListener("click", () => { SHOP_INCLUDE_NEIGHBORS = !SHOP_INCLUDE_NEIGHBORS; STB.rerender(); });
+      sections.push(tog);
+      if (SHOP_INCLUDE_NEIGHBORS) {
+        sections.push(
+          el("div", { class: "shop-tier-head" }, "Across the state line — verify your plan covers it"),
+          el("div", { class: "shop-list" }, ...neighborHosps.map((h) => shopRow(p, h, maxCash))),
+        );
+      }
+    }
+
+    const anchoredChildren = [
+      buildSelector(state), anchorEl,
+      el("div", { class: "shop-controls" }, sortControl(), copyLink()),
+      medEl,
+      worthTheTravelCallout(p, withDist, anchor),   // implemented in Task 8; returns null for now
+      comparePanel(p),                              // implemented in Task 8; returns null for now
+      ...sections,
       fairReveal(p),
-      el("div", { id: "detail", class: "detail" }),   // detail.js fills when state.hospital set
-    );
+      el("div", { id: "detail", class: "detail" }),
+    ];
+    view.replaceChildren(...anchoredChildren.filter(Boolean));
     if (state.hospital) document.dispatchEvent(new CustomEvent("stb:route-changed", { detail: state }));
   }
 
@@ -341,20 +478,92 @@
     return SHOP_SORT === "priciest" ? bv - av : av - bv;          // default cheapest-first
   }
 
+  function comparePin(p, h) {
+    const on = STBCompare.has(h.key);
+    const btn = el("button", {
+      class: "compare-pin" + (on ? " on" : ""), type: "button",
+      title: on ? "Remove from compare" : "Add to compare", "aria-pressed": on ? "true" : "false",
+    }, on ? "✓" : "+");
+    btn.addEventListener("click", (ev) => { ev.stopPropagation(); STBCompare.toggle(h.key); STB.rerender(); });
+    return btn;
+  }
+
+  // Pinned hospitals priced for the CURRENT procedure, with the savings spread.
+  function comparePanel(p) {
+    const keys = STBCompare.list();
+    if (!keys.length) return null;
+    const rows = keys
+      .map((k) => p.hospitals.find((h) => h.key === k))
+      .filter(Boolean)
+      .map((h) => ({ h, cash: h.cash_price }));
+    const priced = rows.map((r) => r.cash).filter((c) => c != null);
+    const best = priced.length ? Math.min(...priced) : null;
+
+    const clearBtn = el("button", { class: "compare-clear", type: "button" }, "clear");
+    clearBtn.addEventListener("click", () => { STBCompare.clear(); STB.rerender(); });
+
+    return el("div", { class: "compare-panel" },
+      el("div", { class: "compare-head" }, el("strong", null, `Your compare set (${rows.length})`), clearBtn),
+      el("div", { class: "compare-rows" }, ...rows.map(({ h, cash }) => {
+        const delta = (cash != null && best != null && cash > best) ? ` · +${fmtUSD(cash - best)} vs cheapest` : (cash != null && cash === best ? " · cheapest here" : "");
+        const remove = el("button", { class: "compare-remove", type: "button", title: "Remove" }, "×");
+        remove.addEventListener("click", () => { STBCompare.toggle(h.key); STB.rerender(); });
+        return el("div", { class: "compare-row" },
+          el("span", { class: "compare-name" }, h.name),
+          el("span", { class: "compare-price" }, cash != null ? fmtUSD(cash) : "no posted price"),
+          el("span", { class: "dim micro" }, delta),
+          remove,
+        );
+      })),
+    );
+  }
+
+  function worthTheTravelCallout(p, withDist, anchor) {
+    const wtt = STBRelevance.worthTheTravel(withDist, anchor.state);
+    if (!wtt) return null;
+    const w = wtt.winner;
+    const crossBorder = (w.state || "").toUpperCase() !== (anchor.state || "").toUpperCase();
+    const addBtn = el("button", { class: "wtt-add", type: "button" },
+      STBCompare.has(w.key) ? "✓ in compare" : "+ add to compare");
+    addBtn.addEventListener("click", () => { STBCompare.toggle(w.key); STB.rerender(); });
+
+    const line2 = `${fmtUSD(w._savings)} less than the best price near you · ${fmtDistance(w._distance)}, likely a multi-hour drive` +
+      (crossBorder ? ` · across the ${anchor.state}–${w.state} line — check your plan` : "");
+
+    const children = [
+      el("div", { class: "wtt-head" }, "⭐ Worth the travel"),
+      el("div", { class: "wtt-main" }, el("strong", null, `${w.name} — ${fmtUSD(w.cash_price)}`)),
+      el("div", { class: "wtt-sub dim" }, line2),
+      addBtn,
+    ];
+    if (wtt.others.length) {
+      const more = el("details", { class: "wtt-more" },
+        el("summary", null, `other options worth the drive (${wtt.others.length})`),
+        ...wtt.others.map((o) => el("div", { class: "wtt-other dim micro" },
+          `${o.name} — ${fmtUSD(o.cash_price)} · ${fmtDistance(o._distance)} · ${fmtUSD(o._savings)} less`)));
+      children.push(more);
+    }
+    return el("div", { class: "wtt-callout" }, ...children);
+  }
+
   function shopRow(p, h, maxCash) {
     const cash = h.cash_price;
     const mult = h.multiples && h.multiples.cash_vs_medicare;
     const pct = (cash != null && maxCash) ? Math.max(3, Math.round(100 * cash / maxCash)) : 0;
-    const row = el("button", { class: "shop-row" + (h.is_critical_access ? " cah" : ""), type: "button" },
-      el("div", { class: "shop-name" },
-        el("span", null, h.name),
-        el("span", { class: "shop-tags dim micro" }, tier2Tag(h)),
+    const dist = h._distance != null ? el("span", { class: "shop-dist dim micro" }, fmtDistance(h._distance)) : null;
+    const row = el("div", { class: "shop-row" + (h.is_critical_access ? " cah" : "") },
+      comparePin(p, h),
+      el("button", { class: "shop-rowbtn", type: "button" },
+        el("div", { class: "shop-name" },
+          el("span", null, h.name),
+          el("span", { class: "shop-tags dim micro" }, tier2Tag(h), dist ? " · " : "", dist),
+        ),
+        el("div", { class: "shop-price" }, cash != null ? fmtUSD(cash) : el("span", { class: "dim" }, "no posted price")),
+        el("div", { class: "shop-mult dim micro" }, mult != null ? `${fmtMult(mult)} Medicare` : ""),
+        el("div", { class: "shop-bar" }, el("span", { class: "shop-bar-fill", style: `width:${pct}%` })),
       ),
-      el("div", { class: "shop-price" }, cash != null ? fmtUSD(cash) : el("span", { class: "dim" }, "no posted price")),
-      el("div", { class: "shop-mult dim micro" }, mult != null ? `${fmtMult(mult)} Medicare` : ""),
-      el("div", { class: "shop-bar" }, el("span", { class: "shop-bar-fill", style: `width:${pct}%` })),
     );
-    row.addEventListener("click", () => Router.go({ mode: "shop", cpt: p.cpt, hospital: h.key }));
+    row.querySelector(".shop-rowbtn").addEventListener("click", () => Router.go({ mode: "shop", cpt: p.cpt, hospital: h.key }));
     return row;
   }
 
