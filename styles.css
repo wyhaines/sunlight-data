@@ -62,11 +62,6 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .same-system .pair .detail { color: var(--ink-muted); margin-top: 2px; }
 .same-system .takeaway { margin: 12px 0 0 0; font-size: 13px; color: var(--ink); line-height: 1.45; }
 
-.methodology { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; font-size: 13px; color: #555; margin-bottom: 24px; }
-.methodology h3 { margin: 0 0 8px 0; font-size: 14px; color: var(--ink); }
-.methodology ul { margin: 0; padding-left: 20px; }
-.methodology li { margin-bottom: 4px; }
-
 .footer { color: var(--ink-muted); font-size: 12px; text-align: center; }
 
 .tooltip {
@@ -211,8 +206,6 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .fair-reveal > summary:hover, .methodology-reveal > summary:hover { color: var(--accent); }
 .fair-reveal[open] > summary, .methodology-reveal[open] > summary { margin-bottom: 10px; }
 .fair-body { padding-top: 4px; }
-.methodology-reveal ul { margin: 8px 0 0; padding-left: 20px; }
-.methodology-reveal li { margin-bottom: 4px; }
 
 /* Drill-down */
 .detail:empty { display: none; }

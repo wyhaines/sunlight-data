@@ -42,6 +42,8 @@
       if (!pop) {
         pop = document.createElement("div");
         pop.className = "glossary-pop";
+        pop.id = "glossary-pop";
+        pop.setAttribute("role", "tooltip");
         document.body.appendChild(pop);
       }
       return pop;
@@ -57,7 +59,9 @@
       var p = ensurePop();
       p.textContent = t;
       p.classList.add("visible");
+      if (lastTrigger && lastTrigger !== elm) lastTrigger.removeAttribute("aria-describedby");
       lastTrigger = elm;
+      elm.setAttribute("aria-describedby", "glossary-pop");
       var r = elm.getBoundingClientRect();
       var maxLeft = window.scrollX + document.documentElement.clientWidth - 296;
       p.style.left = Math.max(window.scrollX + 4, Math.min(r.left + window.scrollX, maxLeft)) + "px";
@@ -69,7 +73,7 @@
         p.style.top = (r.bottom + window.scrollY + 6) + "px";   // below (default)
       }
     }
-    function hide() { if (pop) pop.classList.remove("visible"); lastTrigger = null; }
+    function hide() { if (pop) pop.classList.remove("visible"); if (lastTrigger) lastTrigger.removeAttribute("aria-describedby"); lastTrigger = null; }
     function trigger(target) {
       return target && target.closest ? target.closest("[data-term],[data-src]") : null;
     }
@@ -93,7 +97,6 @@
       span.className = "term";
       span.setAttribute("data-term", key);
       span.setAttribute("tabindex", "0");
-      span.setAttribute("title", d);
       span.appendChild(document.createTextNode(String(label)));
       return span;
     };
@@ -101,7 +104,7 @@
       var span = document.createElement("span");
       span.className = "src";
       span.setAttribute("tabindex", "0");
-      if (text) { span.setAttribute("data-src", String(text)); span.setAttribute("title", String(text)); }
+      if (text) { span.setAttribute("data-src", String(text)); }
       span.appendChild(document.createTextNode(marker || "ⓘ"));
       return span;
     };
