@@ -559,7 +559,7 @@
           el("span", { class: "shop-tags dim micro" }, tier2Tag(h), dist ? " · " : "", dist),
         ),
         el("div", { class: "shop-price" }, cash != null ? fmtUSD(cash) : el("span", { class: "dim" }, "no posted price")),
-        el("div", { class: "shop-mult dim micro" }, mult != null ? `${fmtMult(mult)} Medicare` : ""),
+        el("div", { class: "shop-mult dim micro" }, mult != null ? el("span", null, `${fmtMult(mult)} `, window.STBGlossary.term("x_medicare", "Medicare")) : ""),
         el("div", { class: "shop-bar" }, el("span", { class: "shop-bar-fill", style: `width:${pct}%` })),
       ),
     );
@@ -700,8 +700,9 @@
             el("span", { class: "tier2-tag dim micro" }, tier2Tag(h)),
           ),
           el("div", { class: "tier2-prices" },
-            `gross ${fmtUSD(h.gross_charge)} · cash ${fmtUSD(h.cash_price)} · negotiated ` +
-            `${fmtUSD(h.negotiated.min)}–${fmtUSD(h.negotiated.max)}` + postedSpreadNote(h)),
+            `gross ${fmtUSD(h.gross_charge)} · cash ${fmtUSD(h.cash_price)} · `,
+            window.STBGlossary.term("insurer_negotiated", "insurer-negotiated"),
+            ` ${fmtUSD(h.negotiated.min)}–${fmtUSD(h.negotiated.max)}${postedSpreadNote(h)}`),
           el("div", { class: "tier2-mult" },
             mult != null ? `cash = ${fmtMult(mult)} Medicare` : "no posted price"),
         );
@@ -942,33 +943,25 @@
   }
 
   function showTooltip(tip, ev, h) {
-    const fmt = fmtUSD;
+    const f = fmtUSD;
+    const costLow = h.estimated_cost && h.estimated_cost.bottom_up != null
+      ? Math.min(h.estimated_cost.bottom_up, h.estimated_cost.ccr_check != null ? h.estimated_cost.ccr_check : h.estimated_cost.bottom_up)
+      : (h.estimated_cost ? h.estimated_cost.ccr_check : null);
+    const costHigh = h.estimated_cost && h.estimated_cost.bottom_up != null
+      ? Math.max(h.estimated_cost.bottom_up, h.estimated_cost.ccr_check != null ? h.estimated_cost.ccr_check : h.estimated_cost.bottom_up)
+      : (h.estimated_cost ? h.estimated_cost.ccr_check : null);
+    const costText = costLow == null ? "—" : (costLow === costHigh ? f(costLow) : `${f(costLow)} – ${f(costHigh)}`);
     const children = [
       el("div", null, el("strong", null, h.name)),
-      el("div", { class: "dim", style: "margin-bottom:6px" }, `${h.region} · CCN ${h.ccn || "-"}`),
-      el("div", null, `Gross: ${fmt(h.gross_charge)} · Cash: ${fmt(h.cash_price)}`),
-      el("div", null, `Negotiated: ${fmt(h.negotiated.min)} – ${fmt(h.negotiated.max)} (median ${fmt(h.negotiated.median)})`),
+      el("div", { class: "dim micro", style: "margin-bottom:6px" }, h.region),
+      el("div", null, `List price: ${f(h.gross_charge)} · Cash: ${f(h.cash_price)}`),
+      el("div", null, `Insurer-negotiated: ${f(h.negotiated.min)} – ${f(h.negotiated.max)}`),
+      el("div", null, `Estimated cost to deliver: ${costText}`),
+      el("div", null, "Medicare: ", el("strong", null, f(h.medicare_reference.amount)),
+        ` (${(h.medicare_reference.basis || "").replace("_", " ")})`),
       el("hr"),
+      el("div", { class: "dim micro" }, "Prices from the hospital's posted file; cost from its Medicare cost report; Medicare from the published fee schedule."),
     ];
-    if (h.cost_breakdown) {
-      const cb = h.cost_breakdown;
-      children.push(
-        el("div", null, "Est. cost (bottom-up): ", el("strong", null, fmt(h.estimated_cost.bottom_up))),
-        el("div", { class: "dim micro" },
-          `labor ${fmt(cb.technologist_labor)} · contrast ${fmt(cb.contrast_agent)} · capital ${fmt(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmt(cb.overhead)}`),
-      );
-    } else {
-      children.push(el("div", { class: "dim micro" },
-        "No per-site cost model (scan volume is not publicly reported); posted price shown against CCR + Medicare."));
-    }
-    children.push(
-      el("div", null, `CCR×gross: ${fmt(h.estimated_cost && h.estimated_cost.ccr_check)}` + (h.ccr && h.ccr.value != null ? ` (CCR ${h.ccr.value.toFixed(3)} FY${h.ccr.fy})` : "")),
-      el("div", null, "Medicare: ", el("strong", null, fmt(h.medicare_reference.amount)), ` (${(h.medicare_reference.basis || "").replace("_", " ")})`),
-      el("hr"),
-      el("div", { class: "dim micro" }, h.provenance.prices),
-      el("div", { class: "dim micro" }, h.provenance.ccr || "—"),
-      el("div", { class: "dim micro" }, h.provenance.medicare),
-    );
     if (h.medicare_reference.beneficiary_note) {
       children.push(el("div", { class: "warn micro" }, h.medicare_reference.beneficiary_note));
     }

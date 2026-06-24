@@ -220,6 +220,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .detail-head { display: flex; justify-content: space-between; align-items: baseline; }
 .detail-close { font: inherit; border: none; background: none; cursor: pointer; color: #888; }
 .detail-row { display: grid; grid-template-columns: 240px 130px 1fr; gap: 10px; padding: 4px 0; border-bottom: 1px dotted #e2e2e2; }
+.detail .detail-row { grid-template-columns: 1fr auto; align-items: baseline; padding: 5px 0; }
 .detail-amount { font-variant-numeric: tabular-nums; font-weight: 600; }
 .detail-breakdown { margin-top: 8px; }
 
@@ -329,3 +330,22 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .wtt-callout { border: 1px solid #f6c560; background: #fffaf0; border-radius: 6px; padding: 10px 12px; margin: 12px 0; }
 .wtt-head { font-weight: 700; }
 .wtt-add, .compare-clear, .compare-remove { background: none; border: 0; color: var(--link, #2b6cb0); cursor: pointer; }
+
+/* ---- Glossary terms + source affordance + popover ---- */
+.term { border-bottom: 1px dotted #8a8a8a; cursor: help; }
+.term:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.src { margin-left: 5px; color: #9aa0aa; cursor: help; font-size: 11px; vertical-align: super; }
+.src:focus-visible { outline: 2px solid var(--accent); }
+.glossary-pop {
+  position: absolute; z-index: 60; max-width: 280px;
+  background: #1f2430; color: #f0f0f0; font-size: 12px; line-height: 1.45;
+  padding: 8px 10px; border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,.28);
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+}
+.glossary-pop.visible { opacity: 1; }
+
+.method-summary p { margin: 0 0 10px; line-height: 1.5; }
+.method-full { margin-top: 6px; }
+.method-full > summary { cursor: pointer; color: var(--accent); font-size: 13px; }
+.method-full h4 { margin: 12px 0 4px; font-size: 13px; color: var(--ink); }
+.method-full p { margin: 0 0 8px; line-height: 1.5; color: #555; }

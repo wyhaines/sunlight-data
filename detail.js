@@ -1,5 +1,6 @@
 (function () {
   const { el, fmtUSD, fmtMult, medicareShort } = window.STB;
+  const G = () => window.STBGlossary;
 
   function render(state) {
     const container = document.getElementById("detail");
@@ -20,79 +21,74 @@
     const medRef = h.medicare_reference;
     const medUnavail = medRef.amount == null || medRef.basis === "unavailable";
 
-    const priceRows = [
-      ["Chargemaster (gross)", h.gross_charge, h.provenance.prices],
-      ["Cash price", h.cash_price, h.provenance.prices],
-      ["Negotiated (min / median / max)",
-        null, h.provenance.prices,
-        `${fmtUSD(h.negotiated.min)} / ${fmtUSD(h.negotiated.median)} / ${fmtUSD(h.negotiated.max)}`],
-    ];
-    const medRow = tier2
-      ? [medUnavail ? "Medicare reference" : `Medicare reference (${medicareShort(medRef.basis)})`,
-         medRef.amount, h.provenance.medicare, medUnavail ? "no published reference" : null]
-      : ["Medicare reference", h.medicare_reference.amount, h.provenance.medicare];
-
-    let rows;
-    if (tier2) {
-      rows = [...priceRows, medRow];
-    } else if (breadthImaging) {
-      rows = [...priceRows];
-      if (h.estimated_cost && h.estimated_cost.ccr_check != null) {
-        rows.push(["Estimated cost — CCR × gross", h.estimated_cost.ccr_check, h.provenance.ccr]);
+    // ⓘ source text: a plain lead sentence, with the raw provenance appended for auditors.
+    function srcText(kind) {
+      switch (kind) {
+        case "list_price": {
+          let t = "From this hospital's publicly posted price file. " + (h.provenance.prices || "");
+          const ps = h.posted_spread;
+          if (ps && ps.n_items > 1) {
+            t += ps.gross_max > ps.gross_min
+              ? ` Posted at ${ps.n_items} internal line items (${fmtUSD(ps.gross_min)}–${fmtUSD(ps.gross_max)}); the figure shown is the median.`
+              : ` Posted at ${ps.n_items} internal line items, all ${fmtUSD(ps.gross_min)}.`;
+          }
+          return t;
+        }
+        case "prices": return "From this hospital's publicly posted price file. " + (h.provenance.prices || "");
+        case "ccr": return "From this hospital's Medicare cost report (its radiology cost-to-charge ratio × the list price). " + (h.provenance.ccr || "");
+        case "bottom_up": return "Two independent estimates: our build-up from staff time, equipment, and overhead, and this hospital's cost-report ratio × its list price. " + (h.provenance.bottom_up || "") + " " + (h.provenance.ccr || "");
+        case "medicare": return "Medicare's published rate for this service. " + (h.provenance.medicare || "");
+        default: return "";
       }
-      rows.push(medRow);
-    } else {
-      rows = [
-        ...priceRows,
-        ["Estimated cost — bottom-up", h.estimated_cost.bottom_up, h.provenance.bottom_up],
-        ["Estimated cost — CCR × gross", h.estimated_cost.ccr_check, h.provenance.ccr],
-        medRow,
-      ];
     }
 
-    function row([label, amount, source, custom]) {
+    function rowEl(labelNode, amountText, kind) {
       return el("div", { class: "detail-row" },
-        el("div", { class: "detail-label" }, label),
-        el("div", { class: "detail-amount" }, custom != null ? custom : fmtUSD(amount)),
-        el("div", { class: "detail-source dim micro" }, source),
-      );
+        el("div", { class: "detail-label" }, labelNode, G().source(srcText(kind))),
+        el("div", { class: "detail-amount" }, amountText));
     }
 
-    const multLine = h.multiples.cash_vs_medicare != null
-      ? `This hospital's cash price is ${fmtMult(h.multiples.cash_vs_medicare)} its Medicare reference` +
-        ` (${medicareShort(h.multiples.medicare_basis)})` +
-        `; the chargemaster is ${fmtMult(h.multiples.gross_vs_medicare)}.`
-      : "Medicare reference unavailable for this code — multiples not computed.";
+    const rows = [
+      rowEl(G().term("chargemaster", "List price"), fmtUSD(h.gross_charge), "list_price"),
+      rowEl(G().term("cash_price", "Cash (self-pay) price"), fmtUSD(h.cash_price), "prices"),
+      rowEl(G().term("insurer_negotiated", "Insurer-negotiated rates"),
+        `${fmtUSD(h.negotiated.min)} – ${fmtUSD(h.negotiated.max)} (mid ${fmtUSD(h.negotiated.median)})`, "prices"),
+    ];
 
-    // Chargemaster-range note (both tiers): when a hospital posts the same code
-    // at multiple internal line items, surface the gross spread. Genuine
-    // transparency — the headline gross above is the median across those items.
-    const ps = h.posted_spread;
-    let spreadLine = null;
-    if (ps && ps.n_items > 1) {
-      const txt = ps.gross_max > ps.gross_min
-        ? `Chargemaster range: ${fmtUSD(ps.gross_min)}–${fmtUSD(ps.gross_max)} across ${ps.n_items} internal items (the gross above is the median).`
-        : `Posted on ${ps.n_items} internal line items, all at ${fmtUSD(ps.gross_min)}.`;
-      spreadLine = el("div", { class: "detail-breakdown dim" }, txt);
+    // Estimated cost to deliver: range for full Tier-1, single value for breadth-only, none for Tier-2.
+    if (!tier2) {
+      const costs = breadthImaging
+        ? [h.estimated_cost && h.estimated_cost.ccr_check].filter((v) => v != null)
+        : [h.estimated_cost.bottom_up, h.estimated_cost.ccr_check].filter((v) => v != null);
+      if (costs.length) {
+        const lo = Math.min(...costs), hi = Math.max(...costs);
+        const amt = lo === hi ? fmtUSD(lo) : `${fmtUSD(lo)} – ${fmtUSD(hi)}`;
+        rows.push(rowEl(G().term("bottom_up", "Estimated cost to deliver"), amt, breadthImaging ? "ccr" : "bottom_up"));
+      }
     }
 
-    let breakdown;
+    // Medicare reference (basis termed).
+    const medKey = medUnavail ? "medicare_reference" : G().basisTermKey(medRef.basis);
+    rows.push(rowEl(
+      el("span", null, G().term(medKey, "Medicare reference"), medUnavail ? "" : ` (${medicareShort(medRef.basis)})`),
+      medUnavail ? "no published reference" : fmtUSD(medRef.amount), "medicare"));
+
+    // Plain takeaway.
+    const takeaway = h.multiples.cash_vs_medicare != null
+      ? el("p", { class: "takeaway" },
+          `This hospital's cash price is ${fmtMult(h.multiples.cash_vs_medicare)} what Medicare pays`,
+          h.multiples.gross_vs_medicare != null ? `; its list price is ${fmtMult(h.multiples.gross_vs_medicare)}.` : ".")
+      : el("p", { class: "takeaway dim" }, "Medicare publishes no comparable rate for this code.");
+
+    // A short, plain context note (the component breakdown is gone from the surface; it lives in the ⓘ and the chart).
+    let note = null;
     if (tier2) {
-      breakdown = el("div", { class: "detail-breakdown dim" },
-        "Posted prices only — Tier 2. No bottom-up cost build or CCR cross-check; " +
-        "the comparison is the hospital's posted price against Medicare's published rate.");
+      note = el("p", { class: "detail-breakdown dim" },
+        "Posted prices only — no cost-to-deliver estimate for this kind of code.");
     } else if (breadthImaging) {
-      breakdown = el("div", { class: "detail-breakdown dim" },
-        "No per-site bottom-up cost model — scan volume is not publicly reported for this hospital. " +
-        "We show the posted price against two independent public-data references: this hospital's " +
-        "radiology cost-to-charge ratio (CCR × gross) and Medicare's technical rate." +
-        (h.is_critical_access ? " As a Critical Access Hospital it is actually reimbursed ~101% of cost, so the OPPS figure is a benchmark, not the literal payment." : ""));
-    } else {
-      const cb = h.cost_breakdown;
-      breakdown = el("div", { class: "detail-breakdown dim" },
-        `Bottom-up components: labor ${fmtUSD(cb.technologist_labor)} · contrast ${fmtUSD(cb.contrast_agent)}` +
-        ` · capital ${fmtUSD(cb.equipment_capital)} (${cb.capital_basis.replace("_", " ")}) · overhead ${fmtUSD(cb.overhead)}` +
-        ` · volume ${h.scans_per_year_used}/yr`);
+      note = el("p", { class: "detail-breakdown dim" },
+        "No per-site cost build-up here (scan volume isn't publicly reported for this hospital) — the cost figure is its cost-report ratio applied to the list price." +
+        (h.is_critical_access ? " As a Critical Access Hospital its Medicare figure is a benchmark, not the literal payment." : ""));
     }
 
     const children = [
@@ -100,12 +96,12 @@
         el("h3", null, h.name),
         el("button", { class: "detail-close", type: "button" }, "× close"),
       ),
-      el("div", { class: "dim" }, `CPT ${p.cpt} · ${p.label} · CCN ${h.ccn} · ${h.region}`),
+      el("div", { class: "dim micro" }, `${p.label} · `, G().term("cpt", `CPT ${p.cpt}`),
+        G().source(`CCN ${h.ccn} · region ${h.region}`)),
       tier2 ? el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate") : null,
-      ...rows.map(row),
-      breakdown,
-      spreadLine,
-      el("p", { class: "takeaway" }, multLine),
+      ...rows,
+      note,
+      takeaway,
     ];
     if (h.medicare_reference.beneficiary_note) {
       children.push(el("p", { class: "warn micro" }, "CAH note: " + h.medicare_reference.beneficiary_note));

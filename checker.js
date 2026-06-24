@@ -1,5 +1,6 @@
 (function () {
   const { el, fmtUSD, medicareShort } = window.STB;
+  const G = () => window.STBGlossary;
 
   let built = false;
   // Module-scoped handles so activate() can update the picker + hospital list
@@ -180,29 +181,30 @@
     const { breadthImaging } = r;
     const band = classify(charged, r);
 
-    const medLabel = tier2 ? `Medicare reference (${medicareShort(h.medicare_reference.basis)})` : "Medicare reference";
+    const medLabel = el("span", null, G().term("medicare_reference", "Medicare reference"),
+      tier2 ? el("span", null, " (", G().term(G().basisTermKey(h.medicare_reference.basis), medicareShort(h.medicare_reference.basis)), ")") : "");
     let rows;
     if (tier2) {
       rows = [
-        ["Posted chargemaster price", r.gross, h.provenance.prices],
-        ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+        [el("span", null, "Posted ", G().term("chargemaster", "list price")), r.gross, h.provenance.prices],
+        [el("span", null, "Posted ", G().term("cash_price", "cash (self-pay) price")), r.cash, h.provenance.prices],
         [medLabel, r.medicare, h.provenance.medicare],
       ];
     } else if (breadthImaging) {
       rows = [
-        ["Posted chargemaster price", r.gross, h.provenance.prices],
-        ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
+        [el("span", null, "Posted ", G().term("chargemaster", "list price")), r.gross, h.provenance.prices],
+        [el("span", null, "Posted ", G().term("cash_price", "cash (self-pay) price")), r.cash, h.provenance.prices],
       ];
       if (r.costLow != null) {
-        rows.push(["Estimated cost to deliver (CCR × gross)",
+        rows.push([el("span", null, G().term("bottom_up", "Estimated cost to deliver"), " (", G().term("ccr", "CCR"), " × list price)"),
           r.costLow, h.provenance.ccr]);
       }
       rows.push([medLabel, r.medicare, h.provenance.medicare]);
     } else {
       rows = [
-        ["Posted chargemaster price", r.gross, h.provenance.prices],
-        ["Posted cash (self-pay) price", r.cash, h.provenance.prices],
-        ["Estimated cost to deliver (two methods)",
+        [el("span", null, "Posted ", G().term("chargemaster", "list price")), r.gross, h.provenance.prices],
+        [el("span", null, "Posted ", G().term("cash_price", "cash (self-pay) price")), r.cash, h.provenance.prices],
+        [el("span", null, G().term("bottom_up", "Estimated cost to deliver"), " (two methods)"),
           null, h.provenance.bottom_up,
           r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
         [medLabel, r.medicare, h.provenance.medicare],
