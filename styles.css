@@ -342,3 +342,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .method-full > summary { cursor: pointer; color: var(--accent); font-size: 13px; }
 .method-full h4 { margin: 12px 0 4px; font-size: 13px; color: var(--ink); }
 .method-full p { margin: 0 0 8px; line-height: 1.5; color: #555; }
+
+.breadth-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 14px; }
+.breadth-chip { font-size: 11px; color: var(--ink-muted); background: #f3eee2; border: 1px solid #e2dccb; border-radius: 4px; padding: 3px 9px; }
+.breadth-chip .term { border-bottom: 1px dotted #8a8a8a; }

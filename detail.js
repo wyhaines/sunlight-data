@@ -9,7 +9,12 @@
       container.replaceChildren();
       return;
     }
-    const p = window.STB.doc.procedures[state.cpt];
+    let p = window.STB.doc.procedures[state.cpt];
+    if (!p && window.STBBreadth) {                       // breadth code: adapt from the already-cached shard
+      const shard = window.STBBreadth.cachedShard(state.cpt);
+      const hidx = window.STBBreadth.hospitalIndex();
+      if (shard && hidx) p = window.STBBreadth.breadthRecord(shard, hidx);
+    }
     const h = p && p.hospitals.find((x) => x.key === state.hospital);
     if (!h) {
       container.replaceChildren();
@@ -17,6 +22,7 @@
     }
 
     const tier2 = p.tier === 2;
+    const breadth = p.breadth === true;   // a breadth-index code (no cost model at all)
     const breadthImaging = p.tier === 1 && h.cost_breakdown == null;   // priced + CCR + Medicare, no bottom-up
     const medRef = h.medicare_reference;
     const medUnavail = medRef.amount == null || medRef.basis === "unavailable";
@@ -56,7 +62,7 @@
     ];
 
     // Estimated cost to deliver: range for full Tier-1, single value for breadth-only, none for Tier-2.
-    if (!tier2) {
+    if (!tier2 && !breadth) {
       const costs = breadthImaging
         ? [h.estimated_cost && h.estimated_cost.ccr_check].filter((v) => v != null)
         : [h.estimated_cost.bottom_up, h.estimated_cost.ccr_check].filter((v) => v != null);
@@ -82,7 +88,11 @@
 
     // A short, plain context note (the component breakdown is gone from the surface; it lives in the ⓘ and the chart).
     let note = null;
-    if (tier2) {
+    if (breadth) {
+      note = el("p", { class: "detail-breakdown dim" },
+        "Posted prices and a Medicare benchmark for this code — not one of our worked cost examples, so there's no cost-to-deliver build-up." +
+        (h.is_critical_access ? " As a Critical Access Hospital its Medicare figure is a national/locality benchmark, not the literal cost-based payment." : ""));
+    } else if (tier2) {
       note = el("p", { class: "detail-breakdown dim" },
         "Posted prices only — no cost-to-deliver estimate for this kind of code.");
     } else if (breadthImaging) {
@@ -98,7 +108,7 @@
       ),
       el("div", { class: "dim micro" }, `${p.label} · `, G().term("cpt", `CPT ${p.cpt}`),
         G().source(`CCN ${h.ccn} · region ${h.region}`)),
-      tier2 ? el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate") : null,
+      (tier2 || breadth) ? el("div", { class: "tier2-badge" }, "Posted prices — not a cost estimate") : null,
       ...rows,
       note,
       takeaway,

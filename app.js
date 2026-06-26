@@ -82,6 +82,7 @@
     })
     .then((doc) => {
       DOC = doc;
+      if (window.STBBreadth) window.STBBreadth.ensureHospitalIndex();
       Router.onChange(render);
       render(Router.current());
       window.STB.onReady.forEach((fn) => fn());
@@ -187,33 +188,56 @@
 
     function pick(cpt) { onSelect(cpt); }
 
+    const useBreadth = (mode || "shop") === "shop" && !!window.STBBreadth;
+    let debounceTimer = null;
+
+    // Uniform result rows {cpt, label, tag} from the active source: the 12,369-code
+    // breadth index when loaded (shop mode), else the curated 66.
+    function shopMatches(q) {
+      if (useBreadth && window.STBBreadth.searchReady()) {
+        return window.STBBreadth.match(q).map((r) => ({
+          cpt: r.cpt, label: r.name,
+          tag: r.needs_curation ? "as the hospital describes it" : "",
+        }));
+      }
+      return pickableProcs().filter((p) => matchesQuery(p, q)).slice(0, 10)
+        .map((p) => ({ cpt: p.cpt, label: p.label, tag: procCatTag(p) }));
+    }
+
     function renderResults() {
       const q = input.value.trim().toLowerCase();
       if (!q) { results.hidden = true; results.replaceChildren(); return; }
-      const matches = pickableProcs().filter((p) => matchesQuery(p, q)).slice(0, 10);
+      const matches = shopMatches(q);
       if (matches.length === 0) {
         results.hidden = false;
         results.replaceChildren(el("li", { class: "picker-empty dim" }, "No matching procedures."));
         return;
       }
       results.hidden = false;
-      results.replaceChildren(...matches.map((p, i) => {
-        const li = el("li", { class: "picker-result" + (i === 0 ? " first" : ""), "data-cpt": p.cpt },
-          el("span", { class: "picker-result-label" }, `${p.label} (CPT ${p.cpt})`),
-          el("span", { class: "picker-result-tag dim micro" }, procCatTag(p)),
+      results.replaceChildren(...matches.map((m, i) => {
+        const li = el("li", { class: "picker-result" + (i === 0 ? " first" : ""), "data-cpt": m.cpt },
+          el("span", { class: "picker-result-label" }, `${m.label} (CPT ${m.cpt})`),
+          el("span", { class: "picker-result-tag dim micro" }, m.tag),
         );
-        li.addEventListener("click", () => pick(p.cpt));
+        li.addEventListener("click", () => pick(m.cpt));
         return li;
       }));
     }
 
     // Enter selects the first match (low-effort keyboard win).
-    input.addEventListener("input", renderResults);
+    input.addEventListener("focus", () => {
+      if (useBreadth) window.STBBreadth.ensureSearch().then(renderResults);
+    });
+    input.addEventListener("input", () => {
+      if (!useBreadth) { renderResults(); return; }
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(renderResults, 120);
+    });
     input.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter") return;
       const q = input.value.trim().toLowerCase();
       if (!q) return;
-      const first = pickableProcs().filter((p) => matchesQuery(p, q))[0];
+      const first = shopMatches(q)[0];
       if (first) { ev.preventDefault(); pick(first.cpt); }
     });
 
@@ -272,8 +296,12 @@
 
     // Current-selection summary + Change (shown when a procedure is selected).
     const picker = el("div", { class: "proc-picker", "data-mode": mode || "shop" });
-    if (selectedCpt && DOC.procedures[selectedCpt]) {
-      const p = DOC.procedures[selectedCpt];
+    const selShard = (selectedCpt && !DOC.procedures[selectedCpt] && window.STBBreadth)
+      ? window.STBBreadth.cachedShard(selectedCpt) : null;
+    const selProc = (selectedCpt && DOC.procedures[selectedCpt])
+      || (selShard ? { label: selShard.name, cpt: selectedCpt } : null);
+    if (selProc) {
+      const p = selProc;
       search.hidden = true;
       const change = el("button", { class: "picker-change", type: "button" }, "Change");
       change.addEventListener("click", () => {
@@ -381,18 +409,50 @@
              MT: "Montana", SD: "South Dakota", ID: "Idaho" }[code] || code;
   }
 
+  // Resolve a Shop CPT to a renderable record: a curated procedure from data.json,
+  // or a breadth code adapted from its lazy-loaded shard (fetched on demand, with a
+  // re-render when it arrives). Status: "ok" | "loading" | "error" | "none".
+  function resolveShopProc(cpt) {
+    if (!cpt) return { status: "none" };
+    if (DOC.procedures[cpt]) return { status: "ok", p: DOC.procedures[cpt] };
+    const B = window.STBBreadth;
+    if (!B) return { status: "none" };
+    const shard = B.cachedShard(cpt);            // undefined=never, null=failed, object=ok
+    if (shard === undefined) {
+      B.getShard(cpt).then(() => STB.rerender(), () => STB.rerender());
+      return { status: "loading" };
+    }
+    if (shard === null) return { status: "error" };
+    const hidx = B.hospitalIndex();
+    if (!hidx) { B.ensureHospitalIndex().then(() => STB.rerender()); return { status: "loading" }; }
+    return { status: "ok", p: B.breadthRecord(shard, hidx) };
+  }
+
+  // Inline honesty chips for a breadth listing (null for a curated procedure).
+  function breadthChips(p) {
+    if (!p || !p.breadth || !window.STBBreadth || !window.STBGlossary) return null;
+    const G = window.STBGlossary;
+    const chips = window.STBBreadth.badgesFor(p).map((c) =>
+      el("span", { class: "breadth-chip" }, G.term(c.term, c.text)));
+    return el("div", { class: "breadth-chips" }, ...chips);
+  }
+
   function renderShop(state) {
     const view = document.getElementById("shop-view");
     const cpt = state.cpt;
-    if (!cpt || !DOC.procedures[cpt]) {            // no procedure chosen yet
+    const resolved = resolveShopProc(cpt);
+    if (resolved.status !== "ok") {
+      const msg = resolved.status === "loading" ? "Loading this procedure…"
+        : resolved.status === "error" ? "Couldn't load this procedure — please try again."
+        : "Pick a procedure to compare prices.";
       view.replaceChildren(
         buildSelector(state),
         buildAnchorControl(),
-        el("p", { class: "dim shop-empty" }, "Pick a procedure to compare prices."),
+        el("p", { class: resolved.status === "error" ? "warn shop-empty" : "dim shop-empty" }, msg),
       );
       return;
     }
-    const p = DOC.procedures[cpt];
+    const p = resolved.p;
     const anchor = STBAnchor.get();
     const med = p.medicare_national_usd;
     const anchorEl = buildAnchorControl();
@@ -410,6 +470,7 @@
         buildSelector(state), anchorEl,
         el("div", { class: "shop-controls" }, regionFilter(), sortControl(), copyLink()),
         medEl,
+        breadthChips(p),
         comparePanel(p),
         el("div", { class: "shop-list" }, ...ordered.map((h) => shopRow(p, h, maxCash))),
         fairReveal(p),
@@ -461,6 +522,7 @@
       buildSelector(state), anchorEl,
       el("div", { class: "shop-controls" }, sortControl(), copyLink()),
       medEl,
+      breadthChips(p),
       worthTheTravelCallout(p, withDist, anchor),   // implemented in Task 8; returns null for now
       comparePanel(p),                              // implemented in Task 8; returns null for now
       ...sections,

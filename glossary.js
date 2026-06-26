@@ -19,6 +19,8 @@
     clfs: { label: "CLFS", def: "Medicare's Clinical Laboratory Fee Schedule — its national rates for lab tests." },
     pfs: { label: "PFS", def: "Medicare's Physician Fee Schedule — used here for a few services Medicare doesn't pay under the hospital outpatient system." },
     cpt: { label: "CPT code", def: "The standard nationwide billing code for a specific medical service." }
+    ,breadth_listing: { label: "breadth listing", def: "A real posted price plus a Medicare benchmark, drawn straight from this hospital's price file — but not one of our fully worked cost examples, so there's no cost-to-deliver build-up or convergence chart." }
+    ,hospital_named: { label: "hospital-described name", def: "We haven't curated a plain-language name for this code yet, so we show the wording the hospital itself posted. It may be abbreviated or use chargemaster shorthand." }
   };
 
   function defFor(key) {
