@@ -24,6 +24,33 @@
     ID: ["MT", "WY", "UT", "NV", "OR", "WA"],
   };
 
+  // Abbrev → full state name, so the search box matches "Wyoming" / "Nebr" as
+  // well as "WY". Full 50 + DC so new hospital states work without revisiting.
+  var STATE_NAMES = {
+    AL: "Alabama", AK: "Alaska", AZ: "Arizona", AR: "Arkansas", CA: "California",
+    CO: "Colorado", CT: "Connecticut", DE: "Delaware", DC: "District of Columbia",
+    FL: "Florida", GA: "Georgia", HI: "Hawaii", ID: "Idaho", IL: "Illinois",
+    IN: "Indiana", IA: "Iowa", KS: "Kansas", KY: "Kentucky", LA: "Louisiana",
+    ME: "Maine", MD: "Maryland", MA: "Massachusetts", MI: "Michigan", MN: "Minnesota",
+    MS: "Mississippi", MO: "Missouri", MT: "Montana", NE: "Nebraska", NV: "Nevada",
+    NH: "New Hampshire", NJ: "New Jersey", NM: "New Mexico", NY: "New York",
+    NC: "North Carolina", ND: "North Dakota", OH: "Ohio", OK: "Oklahoma", OR: "Oregon",
+    PA: "Pennsylvania", RI: "Rhode Island", SC: "South Carolina", SD: "South Dakota",
+    TN: "Tennessee", TX: "Texas", UT: "Utah", VT: "Vermont", VA: "Virginia",
+    WA: "Washington", WV: "West Virginia", WI: "Wisconsin", WY: "Wyoming",
+  };
+
+  // A hospital matches a query by state when the query equals its abbreviation
+  // ("wy") or is a prefix of its full state name ("wyoming" / "wyom"). Prefix —
+  // not substring — so "or" matches Oregon but not the "or" inside "North Dakota".
+  function matchesState(h, q) {
+    var st = (h.state || "").toUpperCase();
+    if (!st) return false;
+    if (st.toLowerCase() === q) return true;
+    var full = (STATE_NAMES[st] || "").toLowerCase();
+    return full !== "" && full.indexOf(q) === 0;
+  }
+
   function haversineMiles(aLat, aLng, bLat, bLng) {
     var Rmi = 3958.7613;
     var toRad = function (d) { return (d * Math.PI) / 180; };
@@ -96,7 +123,8 @@
     if (!q) return { hospitals: [], places: [] };
     var hospitals = (data.hospitals || []).filter(function (h) {
       return h.name.toLowerCase().indexOf(q) >= 0 ||
-        (h.city || "").toLowerCase().indexOf(q) >= 0;
+        (h.city || "").toLowerCase().indexOf(q) >= 0 ||
+        matchesState(h, q);
     }).slice(0, 6);
 
     var places = [];

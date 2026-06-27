@@ -237,6 +237,11 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .chk-field-proc { display: flex; flex-direction: column; gap: 4px; flex: 1 1 100%; }
 .chk-field-label { font-size: 13px; color: #555; }
 .chk-field-proc .proc-picker { margin: 0; }
+/* Hospital field — search-pick-chip widget, same pattern as Shop's location anchor. */
+.chk-field-hosp { display: flex; flex-direction: column; gap: 4px; flex: 1 1 100%; }
+.chk-hosp-chip { margin: 0; padding: 8px 12px; border: 1px solid #bbb; border-radius: 6px; background: var(--surface); }
+.chk-hosp-notlisted { align-self: start; margin-top: 6px; padding: 2px 0; background: none; border: none; font: inherit; font-size: 13px; color: var(--accent); cursor: pointer; text-decoration: underline; }
+.chk-hosp-notlisted:hover { color: #8f2e23; }
 .chk-form select, .chk-form input { font: inherit; padding: 5px 8px; border: 1px solid #bbb; border-radius: 4px; }
 .chk-go { font: inherit; padding: 6px 18px; background: #1a1a1a; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
 .chk-verdict-line { font-size: 17px; margin: 14px 0 8px; }

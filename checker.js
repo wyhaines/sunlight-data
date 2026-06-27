@@ -8,7 +8,8 @@
   // and any itemized lines held in the verdict).
   let currentCpt = null;
   let pickerHost = null;     // stable wrapper the picker re-renders into
-  let hospSelect = null;
+  let hospPickerHost = null; // stable wrapper the hospital search picker re-renders into
+  let selectedHospitalKey = null; // chosen hospital key, or "__other__", or null (unpicked)
   let refreshHospitals = null;
   let stepHost = null;       // the 3-step progress indicator, updated by setStep()
 
@@ -46,18 +47,85 @@
     // Initial procedure: the route's cpt if valid, else the default.
     const initial = (state && state.cpt) ? state.cpt : window.STB.cpt;
     currentCpt = initial || null;
+    selectedHospitalKey = null;   // start unpicked — the user must choose their hospital
 
-    hospSelect = el("select", { id: "chk-hosp" });
-    function fillHospitals() {
-      const res = resolveProc(currentCpt, fillHospitals);
+    // The hospital field is a search-pick-chip widget (the same pattern as Shop's
+    // location anchor): type to filter THIS procedure's hospitals by name / city /
+    // state, click to choose, then it collapses to a compact chip. Scales past a
+    // flat <select> as more states are added. "My hospital isn't listed" stays a
+    // persistent action driving the honest-fallback verdict (the "__other__" key).
+    hospPickerHost = el("div", { class: "chk-hosp-host" });
+    function locLabel(h) {
+      const loc = [h.city, h.state].filter(Boolean).join(", ");
+      return loc ? `${h.name} — ${loc}` : h.name;
+    }
+    function renderHospitalPicker() {
+      const res = resolveProc(currentCpt, renderHospitalPicker);
       const p = res.status === "ok" ? res.p : null;
-      if (!p) { hospSelect.replaceChildren(); return; }
-      hospSelect.replaceChildren(
-        ...p.hospitals.map((h) => el("option", { value: h.key }, h.name)),
-        el("option", { value: "__other__" }, "My hospital isn't listed"),
+      if (!p) {
+        hospPickerHost.replaceChildren(el("p", { class: "micro dim" },
+          res.status === "loading" ? "Loading this procedure…" : "Pick a procedure first."));
+        return;
+      }
+      const hosps = p.hospitals;
+
+      // Drop a stale pick if the chosen hospital doesn't price the new procedure
+      // ("__other__" is procedure-independent, so it survives).
+      if (selectedHospitalKey && selectedHospitalKey !== "__other__" &&
+          !hosps.some((h) => h.key === selectedHospitalKey)) {
+        selectedHospitalKey = null;
+      }
+
+      // SELECTED → compact chip with a Change affordance.
+      if (selectedHospitalKey) {
+        const h = selectedHospitalKey === "__other__"
+          ? null : hosps.find((x) => x.key === selectedHospitalKey);
+        const label = selectedHospitalKey === "__other__"
+          ? "My hospital isn't listed" : (h ? locLabel(h) : selectedHospitalKey);
+        const change = el("button", { class: "anchor-change", type: "button" }, "Change");
+        change.addEventListener("click", () => { selectedHospitalKey = null; renderHospitalPicker(); });
+        hospPickerHost.replaceChildren(el("div", { class: "anchor-control chk-hosp-chip" },
+          el("span", { class: "anchor-pin" }, "🏥"),
+          el("span", { class: "anchor-current" }, label),
+          change,
+        ));
+        return;
+      }
+
+      // EMPTY / TYPING → search input + filtered results + persistent escape hatch.
+      const input = el("input", {
+        class: "picker-input", type: "search", autocomplete: "off",
+        placeholder: "Search your hospital by name, city, or state", "aria-label": "Your hospital",
+      });
+      const results = el("ul", { class: "picker-results", hidden: "" });
+      function choose(key) { selectedHospitalKey = key; renderHospitalPicker(); }
+      function renderResults() {
+        const q = input.value.trim();
+        if (!q) { results.hidden = true; results.replaceChildren(); return; }
+        const r = window.STBRelevance.searchAnchorCandidates(q, { hospitals: hosps, places: {} });
+        const items = r.hospitals.map((h) => {
+          const li = el("li", { class: "picker-result" }, locLabel(h));
+          li.addEventListener("click", () => choose(h.key));
+          return li;
+        });
+        if (!items.length) {
+          items.push(el("li", { class: "picker-empty dim" },
+            "No match — check the spelling, or use “My hospital isn’t listed” below."));
+        }
+        results.hidden = false;
+        results.replaceChildren(...items);
+      }
+      input.addEventListener("input", renderResults);
+
+      const notListed = el("button", { type: "button", class: "chk-hosp-notlisted" }, "My hospital isn't listed");
+      notListed.addEventListener("click", () => choose("__other__"));
+
+      hospPickerHost.replaceChildren(
+        el("div", { class: "picker-search" }, input, results),
+        notListed,
       );
     }
-    refreshHospitals = fillHospitals;
+    refreshHospitals = renderHospitalPicker;
 
     // The picker lives in a stable host; selecting re-renders just the picker
     // (and the hospital list), leaving the amounts and verdict untouched.
@@ -68,14 +136,14 @@
       }));
     };
     function selectProc(cpt) {
-      if (resolveProc(cpt, () => { renderPicker(); fillHospitals(); }).status === "none") return;
+      if (resolveProc(cpt, () => { renderPicker(); renderHospitalPicker(); }).status === "none") return;
       currentCpt = cpt;
       renderPicker();
-      fillHospitals();           // breadth: fills empty now, re-fills via onLoad when the shard lands
+      renderHospitalPicker();    // re-scopes hospital search; re-renders via onLoad when a breadth shard lands
       Router.go({ mode: "bill", cpt });   // bookmarkable; re-fires stb:bill-mode (activate is idempotent)
     }
     renderPicker();
-    fillHospitals();
+    renderHospitalPicker();
 
     // Two amounts: what you were quoted (optional) and what you were charged.
     const quotedInput = el("input", { id: "chk-quoted", type: "number", min: "0", step: "0.01", placeholder: "optional" });
@@ -90,6 +158,11 @@
         verdict.replaceChildren(el("p", { class: "warn" }, "Pick the procedure you think it was."));
         return;
       }
+      if (!selectedHospitalKey) {
+        verdict.replaceChildren(el("p", { class: "warn" },
+          "Pick the hospital that sent you the bill (or “My hospital isn't listed”)."));
+        return;
+      }
       if (!(charged > 0)) {
         verdict.replaceChildren(el("p", { class: "warn" }, "Enter the dollar amount you were charged."));
         return;
@@ -101,7 +174,7 @@
             res.status === "loading" ? "Loading this procedure…" : "Pick the procedure you think it was."));
           return;
         }
-        renderVerdict(verdict, res.p, hospSelect.value, charged, quoted);
+        renderVerdict(verdict, res.p, selectedHospitalKey, charged, quoted);
       }
       runVerdict();
       // Gate-1 usage signal: count that A verdict was rendered — no amount, no
@@ -122,7 +195,7 @@
       stepHost,
       el("div", { class: "chk-form" },
         el("div", { class: "chk-field chk-field-proc" }, el("span", { class: "chk-field-label" }, "Procedure"), pickerHost),
-        el("label", null, "Hospital ", hospSelect),
+        el("div", { class: "chk-field chk-field-hosp" }, el("span", { class: "chk-field-label" }, "Hospital"), hospPickerHost),
         el("label", null, "You were quoted ($) ", quotedInput),
         el("label", null, "You were charged ($) ", chargedInput),
         goBtn,
