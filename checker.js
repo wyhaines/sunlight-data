@@ -428,8 +428,10 @@
     return el("div", { class: "itemized-section" },
       el("h4", null, "Itemized check"),
       el("p", { class: "dim micro" },
-        "Enter each CPT code and its charge from your itemized bill. We price each against this hospital's " +
-        "posted prices and Medicare. Codes other than the one you expected are flagged as likely add-ons."),
+        "Enter each line from your bill — its description (or a code, if it has one) and the charge. Real bills " +
+        "often list a department name, not a code: type what you see and pick the match, or keep it as written. " +
+        "We price each against this hospital's posted prices, insurer-negotiated rates, and Medicare. Codes other " +
+        "than the one you expected are flagged as likely add-ons."),
       itemizedChecker(p, hospKey, charged, quoted),
     );
   }
@@ -438,64 +440,123 @@
   // never leaves the browser. Pre-seeded with one row = the base CPT.
   function itemizedChecker(p, hospKey, charged, quoted) {
     const doc = window.STB.doc;
-    const lines = [{ cpt: p.cpt, charge: "" }];
+    // A line is {text, cpt, label, charge}: text = what's on the bill (kept for
+    // un-coded lines), cpt/label = the code the user matched it to (null = raw
+    // text), charge = the dollar amount. Seeded with the expected procedure,
+    // pre-matched to its code.
+    const emptyLine = () => ({ text: "", cpt: null, label: null, charge: "" });
+    const lines = [{ text: p.label, cpt: p.cpt, label: p.label, charge: "" }];
 
     const rowsWrap = el("div", { class: "itemized" });
     const resultsWrap = el("div", { class: "iresults" });
 
-    function syncFromInputs() {
-      // Pull current input values into state (so re-render preserves edits).
-      const rowEls = rowsWrap.querySelectorAll(".iline");
-      rowEls.forEach((rowEl, i) => {
-        if (!lines[i]) return;
-        const cptEl = rowEl.querySelector(".icpt");
-        const chgEl = rowEl.querySelector(".icharge");
-        if (cptEl) lines[i].cpt = cptEl.value.trim();
-        if (chgEl) lines[i].charge = chgEl.value;
+    // Search the 12,369-code index (reusing the breadth matcher); fall back to the
+    // curated catalog when breadth isn't loaded. Returns [{cpt, name, needs_curation}].
+    function lineMatches(q) {
+      const B = window.STBBreadth;
+      if (B && B.searchReady()) {
+        return B.match(q).map((m) => ({ cpt: m.cpt, name: m.name, needs_curation: m.needs_curation }));
+      }
+      const ql = q.toLowerCase();
+      return Object.values(doc.procedures)
+        .filter((pp) => pp.cpt.indexOf(q) >= 0 || pp.label.toLowerCase().indexOf(ql) >= 0)
+        .slice(0, 10).map((pp) => ({ cpt: pp.cpt, name: pp.label, needs_curation: false }));
+    }
+
+    // One dropdown row. mousedown (not click) fires before the input's blur, so a
+    // pick lands before the dropdown auto-closes.
+    function rowResult(label, tag, onPick, extraCls) {
+      const li = el("li", { class: "picker-result" + (extraCls ? " " + extraCls : "") },
+        el("span", { class: "picker-result-label" }, label),
+        el("span", { class: "picker-result-tag dim micro" }, tag));
+      li.addEventListener("mousedown", (e) => { e.preventDefault(); onPick(); });
+      return li;
+    }
+
+    // One editable row: a free-text description/code search-select + a charge.
+    // Typing searches the index; picking attaches a CPT (so we can price it), or
+    // "use as written" keeps the raw bill text as an un-coded line.
+    function buildRow(ln, i) {
+      const descInput = el("input", { class: "idesc", type: "text", autocomplete: "off",
+        placeholder: "Description or code — e.g. ultrasound, 76830",
+        value: ln.cpt ? (ln.label || ln.cpt) : (ln.text || "") });
+      const dropdown = el("ul", { class: "picker-results iline-results", hidden: "" });
+      const chargeInput = el("input", { class: "icharge", type: "number", min: "0", step: "0.01",
+        placeholder: "charge ($)", value: ln.charge || "" });
+      const rm = el("button", { type: "button", class: "irm", title: "Remove line" }, "×");
+
+      function closeDropdown() { dropdown.hidden = true; dropdown.replaceChildren(); }
+      function resolveMatch(cpt, name) {
+        ln.cpt = cpt; ln.label = name; ln.text = name;
+        descInput.value = name; closeDropdown(); renderResults();
+      }
+      function keepAsWritten() {
+        ln.cpt = null; ln.label = null; ln.text = descInput.value.trim();
+        closeDropdown(); renderResults();
+      }
+      function renderDropdown() {
+        const q = descInput.value.trim();
+        if (!q) { closeDropdown(); return; }
+        const items = lineMatches(q).map((m) =>
+          rowResult(`${m.name} (CPT ${m.cpt})`, m.needs_curation ? "as the hospital describes it" : "",
+            () => resolveMatch(m.cpt, m.name)));
+        items.push(rowResult(`Use “${q}” as written`, "no code match", keepAsWritten, "iline-keep"));
+        dropdown.replaceChildren(...items);
+        dropdown.hidden = false;
+      }
+
+      descInput.addEventListener("input", () => {
+        ln.text = descInput.value; ln.cpt = null; ln.label = null;   // editing invalidates a prior match
+        const B = window.STBBreadth;
+        if (B && !B.searchReady()) B.ensureSearch().then(() => { if (!dropdown.hidden) renderDropdown(); }, () => {});
+        renderDropdown(); renderResults();
       });
+      descInput.addEventListener("focus", () => {
+        const B = window.STBBreadth;
+        if (B && !B.searchReady()) B.ensureSearch().then(() => { if (document.activeElement === descInput) renderDropdown(); }, () => {});
+        if (descInput.value.trim() && !ln.cpt) renderDropdown();
+      });
+      descInput.addEventListener("blur", () => { setTimeout(closeDropdown, 150); });
+      chargeInput.addEventListener("input", () => { ln.charge = chargeInput.value; renderResults(); });
+      rm.addEventListener("click", () => {
+        lines.splice(i, 1);
+        if (lines.length === 0) lines.push(emptyLine());
+        renderRows(); renderResults();
+      });
+
+      return el("div", { class: "iline" },
+        el("div", { class: "idesc-wrap" }, descInput, dropdown),
+        chargeInput, rm);
     }
 
-    function renderRows() {
-      rowsWrap.replaceChildren(...lines.map((ln, i) => {
-        const cptInput = el("input", { class: "icpt", type: "text", inputmode: "numeric",
-          placeholder: "CPT", value: ln.cpt || "" });
-        const chargeInput = el("input", { class: "icharge", type: "number", min: "0", step: "0.01",
-          placeholder: "charge ($)", value: ln.charge || "" });
-        cptInput.addEventListener("input", () => { syncFromInputs(); renderResults(); });
-        chargeInput.addEventListener("input", () => { syncFromInputs(); renderResults(); });
-        const rm = el("button", { type: "button", class: "irm", title: "Remove line" }, "×");
-        rm.addEventListener("click", () => {
-          syncFromInputs();
-          lines.splice(i, 1);
-          if (lines.length === 0) lines.push({ cpt: "", charge: "" });
-          renderRows();
-          renderResults();
-        });
-        return el("div", { class: "iline" }, cptInput, chargeInput, rm);
-      }));
-    }
+    function renderRows() { rowsWrap.replaceChildren(...lines.map((ln, i) => buildRow(ln, i))); }
 
-    // Price one entered CPT line against the selected hospital. Honest fallbacks:
-    // unknown code → no benchmark; known code with no price here → say so. Never
-    // invents a number.
-    function priceLine(cpt, charge, isBase) {
+    // Price one line against the selected hospital. Honest fallbacks: raw text →
+    // no code, ask the hospital to identify it; unknown code → no benchmark; known
+    // code with no price here → say so. Never invents a number.
+    function priceLine(ln, isBase) {
+      const cpt = ln.cpt;
+      const charge = ln.charge;
       const verdict = el("div", { class: "iline-verdict" });
       const cls = ["iline-result"];
       if (!isBase) cls.push("addon");
 
       if (!cpt) {
-        verdict.appendChild(el("span", { class: "dim" }, "Enter a CPT code."));
-        return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null), verdict);
+        const txt = (ln.text || "").trim();
+        verdict.appendChild(el("span", { class: "dim" }, txt
+          ? "Not matched to a billing code — we can't benchmark it, but it's worth asking the hospital to identify and explain this charge."
+          : "Type the line's description (or a code), then the charge."));
+        return el("div", { class: cls.join(" ") }, lineHead(ln, isBase, null), verdict);
       }
       const res = resolveProc(cpt, renderResults);
       if (res.status === "loading") {
         verdict.appendChild(el("span", { class: "dim" }, `Looking up CPT ${cpt}…`));
-        return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null), verdict);
+        return el("div", { class: cls.join(" ") }, lineHead(ln, isBase, null), verdict);
       }
       if (res.status !== "ok") {
         verdict.appendChild(el("span", { class: "dim" },
           "We don't have a benchmark for this code (it's not in our dataset) — still worth questioning on your itemized bill."));
-        return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null), verdict);
+        return el("div", { class: cls.join(" ") }, lineHead(ln, isBase, null), verdict);
       }
       const proc = res.p;
       if (hospKey === "__other__") {
@@ -509,19 +570,19 @@
         verdict.appendChild(el("span", { class: "dim" },
           parts.length ? `In our catalog as ${proc.label} — ${parts.join(" · ")}.`
             : `In our catalog as ${proc.label}, but we have no regional benchmark for it.`));
-        return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null, proc.label), verdict);
+        return el("div", { class: cls.join(" ") }, lineHead(ln, isBase, null, proc.label), verdict);
       }
       const h = proc.hospitals.find((x) => x.key === hospKey);
       if (!h || (h.gross_charge == null && h.cash_price == null)) {
         verdict.appendChild(el("span", { class: "dim" },
           `In our catalog as ${proc.label}, but this hospital posts no price for it.`));
         const ref = h ? { gross: h.gross_charge, cash: h.cash_price, medicare: h.medicare_reference.amount,
-          basis: h.medicare_reference.basis } : null;
-        return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, ref, proc.label), verdict);
+          basis: h.medicare_reference.basis, negotiated: h.negotiated } : null;
+        return el("div", { class: cls.join(" ") }, lineHead(ln, isBase, ref, proc.label), verdict);
       }
       const tier2 = proc.tier === 2;
       const r = refs(h, tier2);
-      const ref = { gross: r.gross, cash: r.cash, medicare: r.medicare, basis: h.medicare_reference.basis };
+      const ref = { gross: r.gross, cash: r.cash, medicare: r.medicare, basis: h.medicare_reference.basis, negotiated: h.negotiated };
       const amt = parseFloat(charge);
       if (amt > 0) {
         const band = classify(amt, r);
@@ -529,7 +590,7 @@
       } else {
         verdict.appendChild(el("span", { class: "dim" }, "Enter the charge to compare."));
       }
-      return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, ref, proc.label), verdict);
+      return el("div", { class: cls.join(" ") }, lineHead(ln, isBase, ref, proc.label), verdict);
     }
 
     function renderResults() {
@@ -538,14 +599,16 @@
       lines.forEach((ln, i) => {
         const amt = parseFloat(ln.charge);
         if (amt > 0) sum += amt;
-        priced.push(priceLine(ln.cpt, ln.charge, i === 0 && ln.cpt === p.cpt));
+        priced.push(priceLine(ln, i === 0 && ln.cpt === p.cpt));
       });
 
       // Base-code posted price at this hospital (for the takeaway math).
       const baseH = p.hospitals.find((x) => x.key === hospKey);
       const baseR = (baseH) ? refs(baseH, p.tier === 2) : null;
       const basePosted = baseR ? basePostedPrice(baseR) : null;
-      const otherCount = lines.filter((ln, i) => ln.cpt && !(i === 0 && ln.cpt === p.cpt)).length;
+      // Non-base lines carrying a charge — coded add-ons OR un-coded bill lines —
+      // together make up the gap above the expected procedure's posted price.
+      const otherCount = lines.filter((ln, i) => !(i === 0 && ln.cpt === p.cpt) && parseFloat(ln.charge) > 0).length;
 
       const takeaway = el("div", { class: "itotal" });
       if (sum > 0) {
@@ -556,7 +619,7 @@
           bits.push(`The procedure you expected (${p.label}) posts at `, el("strong", null, fmtUSD(basePosted)), " here");
           if (otherCount > 0 && sum > basePosted) {
             bits.push("; the rest is ", el("strong", null, fmtUSD(sum - basePosted)),
-              ` across ${otherCount} other code${otherCount === 1 ? "" : "s"} — the add-ons that explain the gap.`);
+              ` across ${otherCount} other line${otherCount === 1 ? "" : "s"} — the add-ons that explain the gap.`);
           } else {
             bits.push(".");
           }
@@ -570,12 +633,7 @@
     }
 
     const addBtn = el("button", { type: "button", class: "iadd" }, "+ Add line");
-    addBtn.addEventListener("click", () => {
-      syncFromInputs();
-      lines.push({ cpt: "", charge: "" });
-      renderRows();
-      renderResults();
-    });
+    addBtn.addEventListener("click", () => { lines.push(emptyLine()); renderRows(); renderResults(); });
 
     // Layer-3 quick-add: one-click "likely add-on" lines for this procedure.
     // Only kind:"addon" codes (billed ALONGSIDE the base); a variant is a
@@ -586,8 +644,7 @@
       ...likely.map((a) => {
         const chip = el("button", { type: "button", class: "iaddon-chip" }, `+ ${a.label} (${a.cpt})`);
         chip.addEventListener("click", () => {
-          syncFromInputs();
-          if (!lines.some((ln) => ln.cpt === a.cpt)) lines.push({ cpt: a.cpt, charge: "" });
+          if (!lines.some((ln) => ln.cpt === a.cpt)) lines.push({ text: a.label, cpt: a.cpt, label: a.label, charge: "" });
           renderRows();
           renderResults();
         });
@@ -595,36 +652,39 @@
       }),
     ) : null;
 
-    // Phase 4: build an editable dispute letter from the current itemized state.
-    // Each line is resolved to {cpt,label,charge,postedCash,postedGross,medicare,
-    // isAddon,inCatalog} so disputeLetterText can quote sourced prices and fall
-    // back honestly for codes we don't have.
+    // Resolve each line to the structured shape window.STBLetter.disputeLetterText
+    // consumes: the code/description + the sourced posted / insurer-negotiated /
+    // Medicare prices for this hospital (null for raw-text or un-priced lines — the
+    // letter then asks for an explanation rather than inventing a number).
     function letterLine(ln, isBase) {
-      const cpt = (ln.cpt || "").trim();
       const charge = parseFloat(ln.charge);
-      const res = resolveProc(cpt, () => {});
+      const out = { cpt: ln.cpt || null, text: (ln.text || "").trim() || null, label: ln.label || null,
+        charge: Number.isFinite(charge) ? charge : null, isAddon: !isBase,
+        postedCash: null, postedGross: null, medicare: null, negotiated: null, inCatalog: false };
+      if (!ln.cpt) return out;
+      const res = resolveProc(ln.cpt, () => {});
       const proc = res.status === "ok" ? res.p : null;
-      let label = null, postedCash = null, postedGross = null, medicare = null;
-      if (proc) {
-        label = proc.label;
-        const hh = hospKey !== "__other__" ? proc.hospitals.find((x) => x.key === hospKey) : null;
-        if (hh) { postedCash = hh.cash_price; postedGross = hh.gross_charge; medicare = hh.medicare_reference.amount; }
+      if (!proc) return out;
+      out.inCatalog = true;
+      out.label = proc.label;
+      const hh = hospKey !== "__other__" ? proc.hospitals.find((x) => x.key === hospKey) : null;
+      if (hh) {
+        out.postedCash = hh.cash_price; out.postedGross = hh.gross_charge;
+        out.medicare = hh.medicare_reference.amount; out.negotiated = hh.negotiated || null;
       }
-      return { cpt, label, charge: Number.isFinite(charge) ? charge : null,
-        postedCash, postedGross, medicare, isAddon: !isBase, inCatalog: !!proc };
+      return out;
     }
 
     const letterWrap = el("div", { class: "letter-wrap" });
     const genBtn = el("button", { type: "button", class: "letter-gen" }, "Generate a dispute letter");
     genBtn.addEventListener("click", () => {
-      syncFromInputs();
       const hospitalName = hospKey === "__other__"
         ? "[Hospital name]"
         : ((p.hospitals.find((x) => x.key === hospKey) || {}).name || "[Hospital name]");
       const letterLines = lines
-        .filter((ln) => (ln.cpt || "").trim())
-        .map((ln, i) => letterLine(ln, i === 0 && (ln.cpt || "").trim() === p.cpt));
-      const text = disputeLetterText({ hospitalName, procedureLabel: p.label, baseCpt: p.cpt,
+        .filter((ln) => ln.cpt || (ln.text || "").trim())
+        .map((ln, i) => letterLine(ln, i === 0 && ln.cpt === p.cpt));
+      const text = window.STBLetter.disputeLetterText({ hospitalName, procedureLabel: p.label, baseCpt: p.cpt,
         lines: letterLines, quoted, charged });
       const body = el("textarea", { class: "letter-body", rows: "20", spellcheck: "false" }, text);
       const copyBtn = el("button", { type: "button" }, "Copy");
@@ -657,7 +717,7 @@
     renderResults();
     return el("div", { class: "itemized-wrap" },
       el("div", { class: "iline ihead dim micro" },
-        el("span", null, "CPT code"), el("span", null, "Charge ($)"), el("span", null, "")),
+        el("span", null, "Description or code"), el("span", null, "Charge ($)"), el("span", null, "")),
       rowsWrap,
       addBtn,
       quickAdd,
@@ -667,76 +727,31 @@
     );
   }
 
-  // Phase 4: assemble a plain-text dispute/inquiry letter from the checker state.
-  // Factual, not legal: it quotes the sourced posted/Medicare numbers and the
-  // standard patient-rights asks, requests review/itemization — never asserts a
-  // bill is "illegal" or guarantees an outcome. For codes we have no benchmark
-  // for, it asks for an explanation rather than inventing a reference price.
-  function disputeLetterText({ hospitalName, procedureLabel, baseCpt, lines, quoted, charged }) {
-    const money = (n) => n == null ? null
-      : "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const L = [];
-    L.push(`To the Billing Department, ${hospitalName}:`);
-    L.push("");
-    L.push("Date: [date]");
-    L.push("Account #: [account number]");
-    L.push("Patient: [patient name]");
-    L.push("");
-    L.push(`I am writing to request an itemized review of the charges for ${procedureLabel} (CPT ${baseCpt}).`);
-    if (quoted > 0 && charged > 0) {
-      L.push(`I was quoted ${money(quoted)} for this service but was billed ${money(charged)} — a difference of ${money(charged - quoted)}.`);
-    }
-    L.push("");
-    L.push("The charges I am questioning:");
-    L.push("");
-    lines.forEach((ln) => {
-      const chg = ln.charge != null ? `charged ${money(ln.charge)}` : "charge not listed";
-      let line;
-      if (ln.inCatalog && ln.postedCash != null) {
-        const med = ln.medicare != null ? `, and Medicare pays ${money(ln.medicare)} for the same service` : "";
-        line = `  - CPT ${ln.cpt} (${ln.label}) — ${chg}; this hospital's posted cash (self-pay) price is ${money(ln.postedCash)}${med}.`;
-      } else if (ln.inCatalog) {
-        line = `  - CPT ${ln.cpt} (${ln.label}) — ${chg}; this hospital publishes no separate price for this code, so I request a written explanation of it.`;
-      } else {
-        line = `  - CPT ${ln.cpt} — ${chg}; I request a written explanation of this charge and the service it represents.`;
-      }
-      if (ln.isAddon) line += ` This code was not part of the ${procedureLabel} I was quoted.`;
-      L.push(line);
-    });
-    L.push("");
-    L.push("I request the following:");
-    L.push("");
-    L.push("  1. A fully itemized bill listing every code, its charge, and a plain-language description.");
-    L.push("  2. Review and correction of any charge above this hospital's own posted price for the same code.");
-    L.push("  3. The self-pay / prompt-pay rate, and any discount available if I pay directly.");
-    L.push("  4. Your financial-assistance (charity care) policy and an application — nonprofit hospitals are required to have one, and many patients qualify without realizing it.");
-    L.push("  5. If I was uninsured or self-pay, a Good Faith Estimate under the federal No Surprises Act; a bill substantially above that estimate may be disputed.");
-    L.push("");
-    L.push("Please respond in writing. Thank you for your attention to this matter.");
-    L.push("");
-    L.push("[Your name]");
-    L.push("[Your contact information]");
-    L.push("");
-    L.push("---");
-    L.push("Prepared with publicly posted hospital prices and Medicare reference rates, plus standard patient-rights provisions. This is a template to help you ask questions — not legal advice, and not a determination that any charge is incorrect.");
-    return L.join("\n");
-  }
+  // The dispute-letter text builder lives in web/letter.js (window.STBLetter) —
+  // pure and node-tested; checker.js resolves prices (letterLine) and hands it
+  // structured line data.
 
-  // One result line's header: the code/label + the posted/Medicare references we
-  // have for it at this hospital (so the per-line judgment is auditable).
-  function lineHead(cpt, charge, isBase, ref, label) {
+  // One result line's header: the code (or the raw bill text) + the posted /
+  // insurer-negotiated / Medicare references we have for it at this hospital (so
+  // the per-line judgment is auditable).
+  function lineHead(ln, isBase, ref, label) {
     const tag = isBase ? el("span", { class: "iline-tag base" }, "expected") : el("span", { class: "iline-tag addon" }, "possible add-on");
     const refBits = [];
     if (ref) {
       if (ref.cash != null || ref.gross != null) {
         refBits.push(`posted cash ${fmtUSD(ref.cash)} · gross ${fmtUSD(ref.gross)}`);
       }
+      if (ref.negotiated && ref.negotiated.median != null) {
+        refBits.push(`insurers ${fmtUSD(ref.negotiated.median)}`);
+      }
       if (ref.medicare != null) {
         refBits.push(`Medicare ${fmtUSD(ref.medicare)}${ref.basis ? " (" + medicareShort(ref.basis) + ")" : ""}`);
       }
     }
+    // Code slot: the CPT when matched, else the raw bill text in quotes.
+    const codeText = ln.cpt ? `CPT ${ln.cpt}` : ((ln.text || "").trim() ? `"${ln.text.trim()}"` : "—");
     return el("div", { class: "iline-head" },
-      el("span", { class: "iline-code" }, `CPT ${cpt || "—"}`),
+      el("span", { class: "iline-code" }, codeText),
       label ? el("span", { class: "iline-label dim" }, label) : null,
       tag,
       refBits.length ? el("span", { class: "iline-refs dim micro" }, refBits.join(" · ")) : null,

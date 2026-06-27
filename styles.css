@@ -260,9 +260,14 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .itemized-section { margin: 18px 0; border-top: 1px dotted #ccc; padding-top: 14px; }
 .itemized-section h4 { margin: 0 0 4px; font-size: 14px; letter-spacing: .03em; text-transform: uppercase; color: var(--label-region); }
 .itemized-wrap { margin-top: 10px; }
-.iline { display: grid; grid-template-columns: 120px 130px auto; gap: 10px; align-items: center; margin-bottom: 6px; }
-.iline.ihead { margin-bottom: 4px; }
+.iline { display: grid; grid-template-columns: minmax(180px, 1fr) 120px auto; gap: 10px; align-items: start; margin-bottom: 6px; }
+.iline.ihead { margin-bottom: 4px; align-items: center; }
 .iline input { font: inherit; padding: 5px 8px; border: 1px solid #bbb; border-radius: 4px; }
+/* Free-text description/code search-select per line. */
+.idesc-wrap { position: relative; }
+.idesc { width: 100%; box-sizing: border-box; }
+.iline-results { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 30; margin: 0; }
+.iline-keep { border-top: 1px solid #e8e2d4; }
 .iline .irm { font: inherit; width: 28px; height: 28px; line-height: 1; padding: 0; background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; color: #888; }
 .iline .irm:hover { color: var(--accent); border-color: var(--accent); }
 .iadd { font: inherit; margin: 4px 0 12px; padding: 5px 14px; background: none; border: 1px dashed #999; border-radius: 4px; cursor: pointer; color: #555; }
@@ -302,7 +307,7 @@ html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); fo
 .itotal strong { font-variant-numeric: tabular-nums; }
 
 @media (max-width: 720px) {
-  .iline { grid-template-columns: 1fr 1fr 36px; }
+  .iline { grid-template-columns: minmax(0, 1fr) 88px 32px; }
 }
 
 .anchor-control { margin: 8px 0; }
