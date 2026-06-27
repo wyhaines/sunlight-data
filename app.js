@@ -119,11 +119,9 @@
 
   // ---- Procedure selector (category-grouped, router-driven) ---------------
 
-  const MODALITY_ORDER = ["mri", "ct", "ultrasound", "xray", "mammography"];
   const MODALITY_LABEL = {
     mri: "MRI", ct: "CT", ultrasound: "Ultrasound", xray: "X-ray", mammography: "Mammography",
   };
-  const CATEGORY_ORDER = ["imaging", "lab", "em", "procedure", "surgery"];
   const CATEGORY_LABEL = {
     imaging: "Imaging", lab: "Lab", em: "Office & behavioral-health visits", procedure: "Procedures", surgery: "Surgery",
   };
@@ -131,13 +129,6 @@
   function procGroupKey(p) {
     // Imaging is sub-grouped by modality; every other category groups by itself.
     return p.category === "imaging" && p.modality ? p.modality : (p.category || "other");
-  }
-
-  function groupRank(key) {
-    const mi = MODALITY_ORDER.indexOf(key);
-    if (mi >= 0) return [CATEGORY_ORDER.indexOf("imaging"), mi];   // imaging modalities first, in order
-    const ci = CATEGORY_ORDER.indexOf(key);
-    return [ci >= 0 ? ci : CATEGORY_ORDER.length, 0];
   }
 
   function groupLabel(key) {
@@ -174,31 +165,30 @@
   }
 
   // Shared search-first procedure picker, used by both Shop and Check-a-bill.
-  // Returns a self-contained <div class="proc-picker">. Selecting a procedure
-  // calls onSelect(cpt); the caller is responsible for re-rendering its view.
+  // States: SELECTED (summary + Change) · EMPTY cold-start (common row + section
+  // tiles) · TYPING (search over all 12,369) · SECTION (in-section refine). Selecting
+  // calls onSelect(cpt); the caller re-renders its view.
   function buildProcedurePicker({ selectedCpt, onSelect, mode }) {
-    const placeholder = "Search a procedure or code — e.g. mammogram, 76830";
+    const B = window.STBBreadth;
+    const Sx = window.STBSections;
+    const useBreadth = !!B;                         // both modes, when breadth present
+
     const input = el("input", {
       class: "picker-input", type: "search", autocomplete: "off",
-      placeholder, "aria-label": "Search procedures",
+      placeholder: "Search a procedure or code — e.g. mammogram, 76830", "aria-label": "Search procedures",
     });
     const results = el("ul", { class: "picker-results", hidden: "" });
-    const cat = el("div", { class: "picker-cat" });
-    let openCat = null;   // which browse category is currently expanded
+    const cold = el("div", { class: "picker-cold" });
+    const sectionView = el("div", { class: "picker-section", hidden: "" });
+    let openSection = null;
+    let sectionQuery = "";
 
     function pick(cpt) { onSelect(cpt); }
 
-    const useBreadth = (mode || "shop") === "shop" && !!window.STBBreadth;
-    let debounceTimer = null;
-
-    // Uniform result rows {cpt, label, tag} from the active source: the 12,369-code
-    // breadth index when loaded (shop mode), else the curated 66.
     function shopMatches(q) {
-      if (useBreadth && window.STBBreadth.searchReady()) {
-        return window.STBBreadth.match(q).map((r) => ({
-          cpt: r.cpt, label: r.name,
-          tag: r.needs_curation ? "as the hospital describes it" : "",
-        }));
+      if (useBreadth && B.searchReady()) {
+        return B.match(q).map((r) => ({ cpt: r.cpt, label: r.name,
+          tag: r.needs_curation ? "as the hospital describes it" : "" }));
       }
       return pickableProcs().filter((p) => matchesQuery(p, q)).slice(0, 10)
         .map((p) => ({ cpt: p.cpt, label: p.label, tag: procCatTag(p) }));
@@ -206,32 +196,100 @@
 
     function renderResults() {
       const q = input.value.trim().toLowerCase();
-      if (!q) { results.hidden = true; results.replaceChildren(); return; }
+      if (!q) { results.hidden = true; results.replaceChildren(); renderCold(); return; }
+      cold.hidden = true; sectionView.hidden = true; openSection = null;
       const matches = shopMatches(q);
+      results.hidden = false;
       if (matches.length === 0) {
-        results.hidden = false;
         results.replaceChildren(el("li", { class: "picker-empty dim" }, "No matching procedures."));
         return;
       }
-      results.hidden = false;
       results.replaceChildren(...matches.map((m, i) => {
         const li = el("li", { class: "picker-result" + (i === 0 ? " first" : ""), "data-cpt": m.cpt },
           el("span", { class: "picker-result-label" }, `${m.label} (CPT ${m.cpt})`),
-          el("span", { class: "picker-result-tag dim micro" }, m.tag),
-        );
+          el("span", { class: "picker-result-tag dim micro" }, m.tag));
         li.addEventListener("click", () => pick(m.cpt));
         return li;
       }));
     }
 
-    // Enter selects the first match (low-effort keyboard win).
-    input.addEventListener("focus", () => {
-      if (useBreadth) window.STBBreadth.ensureSearch().then(renderResults);
-    });
-    input.addEventListener("input", () => {
+    // EMPTY cold-start: common-procedures row + section tiles (with live counts).
+    function renderCold() {
+      if (!Sx) { cold.replaceChildren(); cold.hidden = true; return; }
+      if (openSection || input.value.trim()) { cold.hidden = true; return; }
+      cold.hidden = false;
+      const idx = useBreadth ? B.procedureIndex() : null;
+      const counts = idx ? Sx.sectionCounts(idx) : null;
+
+      const common = el("div", { class: "picker-common" },
+        el("div", { class: "picker-cold-label dim" }, "Common procedures"),
+        el("div", { class: "picker-common-row" }, ...Sx.COMMON_PROCEDURES.map((c) => {
+          const b = el("button", { class: "picker-common-chip", type: "button" }, c.label);
+          b.addEventListener("click", () => { input.value = c.query; onInput(); input.focus(); });
+          return b;
+        })));
+
+      const tiles = el("div", { class: "picker-sections" }, ...Sx.SECTIONS.map((s) => {
+        const n = counts ? counts[s.key] : null;
+        const t = el("button", { class: "picker-section-tile", type: "button", "data-section": s.key },
+          el("span", { class: "picker-section-name" }, s.label),
+          el("span", { class: "picker-section-count dim micro" }, n != null ? `${n.toLocaleString()} codes` : ""));
+        t.addEventListener("click", () => { openSection = s.key; sectionQuery = ""; renderSection(); });
+        return t;
+      }));
+
+      cold.replaceChildren(common,
+        el("div", { class: "picker-cold-label dim", style: "margin-top:12px" },
+          useBreadth ? "Or browse by section" : "Or browse"),
+        tiles);
+    }
+
+    // SECTION browse: breadcrumb + refine input + capped list.
+    const sectionRefine = el("input", { class: "picker-input picker-refine", type: "search",
+      autocomplete: "off", "aria-label": "Refine within section" });
+    sectionRefine.addEventListener("input", () => { sectionQuery = sectionRefine.value; renderSectionList(); });
+    const sectionNote = el("div", { class: "picker-section-note dim micro" });
+    const sectionList = el("ul", { class: "picker-results" });
+
+    function renderSection() {
+      input.value = ""; results.hidden = true; cold.hidden = true; sectionView.hidden = false;
+      const s = Sx.SECTIONS.find((x) => x.key === openSection);
+      const back = el("button", { class: "picker-crumb-back", type: "button" }, "← All sections");
+      back.addEventListener("click", () => { openSection = null; sectionView.hidden = true; renderCold(); });
+      const crumb = el("div", { class: "picker-crumb" }, back,
+        el("span", { class: "picker-crumb-here" }, ` / ${s ? s.label : ""}`));
+      sectionRefine.value = sectionQuery;
+      sectionRefine.placeholder = `Refine within ${s ? s.label : "section"} — e.g. knee, 73721`;
+      sectionView.replaceChildren(crumb, sectionRefine, sectionNote, sectionList);
+      renderSectionList();
+      sectionRefine.focus();
+    }
+
+    function renderSectionList() {
+      const idx = useBreadth ? B.procedureIndex() : null;
+      if (!idx) { sectionNote.textContent = "Loading catalog…"; sectionList.replaceChildren(); return; }
+      const { total, items } = Sx.filterSection(idx, openSection, sectionQuery, 50);
+      sectionNote.textContent = total > items.length
+        ? `Showing first ${items.length} of ${total.toLocaleString()} — type to narrow.`
+        : `${total.toLocaleString()} result${total === 1 ? "" : "s"}.`;
+      sectionList.replaceChildren(...items.map((m) => {
+        const li = el("li", { class: "picker-result", "data-cpt": m.cpt },
+          el("span", { class: "picker-result-label" }, `${m.name} (CPT ${m.cpt})`),
+          el("span", { class: "picker-result-tag dim micro" }, m.needs_curation ? "as the hospital describes it" : ""));
+        li.addEventListener("click", () => pick(m.cpt));
+        return li;
+      }));
+    }
+
+    let debounceTimer = null;
+    function onInput() {
       if (!useBreadth) { renderResults(); return; }
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(renderResults, 120);
+    }
+    input.addEventListener("input", onInput);
+    input.addEventListener("focus", () => {
+      if (useBreadth) { B.ensureProcedureIndex().then(renderCold); B.ensureSearch().then(renderResults); }
     });
     input.addEventListener("keydown", (ev) => {
       if (ev.key !== "Enter") return;
@@ -241,81 +299,29 @@
       if (first) { ev.preventDefault(); pick(first.cpt); }
     });
 
-    // Browse-by-category: expand one category at a time, reusing the grouping
-    // helpers. Imaging is sub-grouped by modality.
-    function categoryProcsGrouped(catKey) {
-      const procs = pickableProcs().filter((p) => (p.category || "other") === catKey);
-      const groups = new Map();
-      procs.forEach((p) => {
-        const key = procGroupKey(p);
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(p);
-      });
-      const orderedKeys = [...groups.keys()].sort((a, b) => {
-        const ra = groupRank(a), rb = groupRank(b);
-        return ra[0] - rb[0] || ra[1] - rb[1] || a.localeCompare(b);
-      });
-      return orderedKeys.map((key) => ({ key, procs: groups.get(key).sort((a, b) => a.cpt.localeCompare(b.cpt)) }));
-    }
+    const search = el("div", { class: "picker-search" }, input, results, cold, sectionView);
 
-    function renderCat() {
-      if (!openCat) { cat.replaceChildren(); return; }
-      const blocks = categoryProcsGrouped(openCat).map(({ key, procs }) =>
-        el("div", { class: "picker-cat-group" },
-          // Only show a sub-label when it differs from the category (i.e. imaging modalities).
-          key === openCat ? null : el("div", { class: "picker-cat-sublabel" }, groupLabel(key)),
-          el("div", { class: "picker-cat-items" },
-            ...procs.map((p) => {
-              const b = el("button", { class: "picker-cat-item" + (p.cpt === selectedCpt ? " active" : ""), type: "button", "data-cpt": p.cpt },
-                `${p.label} (CPT ${p.cpt})`);
-              b.addEventListener("click", () => pick(p.cpt));
-              return b;
-            }),
-          ),
-        ));
-      cat.replaceChildren(...blocks);
-    }
-
-    const browseButtons = CATEGORY_ORDER.map((catKey) => {
-      const b = el("button", { class: "picker-browse-btn", type: "button", "data-cat": catKey }, CATEGORY_LABEL[catKey]);
-      b.addEventListener("click", () => {
-        openCat = openCat === catKey ? null : catKey;   // toggle: same button collapses
-        for (const sib of browse.querySelectorAll(".picker-browse-btn")) {
-          sib.classList.toggle("active", sib.getAttribute("data-cat") === openCat);
-        }
-        renderCat();
-      });
-      return b;
-    });
-    const browse = el("div", { class: "picker-browse" },
-      el("span", { class: "picker-browse-label dim" }, "or browse:"),
-      ...browseButtons,
-    );
-
-    const search = el("div", { class: "picker-search" }, input, results, browse, cat);
-
-    // Current-selection summary + Change (shown when a procedure is selected).
     const picker = el("div", { class: "proc-picker", "data-mode": mode || "shop" });
-    const selShard = (selectedCpt && !DOC.procedures[selectedCpt] && window.STBBreadth)
-      ? window.STBBreadth.cachedShard(selectedCpt) : null;
+    const selShard = (selectedCpt && !DOC.procedures[selectedCpt] && B) ? B.cachedShard(selectedCpt) : null;
     const selProc = (selectedCpt && DOC.procedures[selectedCpt])
       || (selShard ? { label: selShard.name, cpt: selectedCpt } : null);
+    function openSearch() {
+      search.hidden = false;
+      if (useBreadth) B.ensureProcedureIndex().then(renderCold);
+      renderCold();
+      input.focus();
+    }
     if (selProc) {
-      const p = selProc;
       search.hidden = true;
       const change = el("button", { class: "picker-change", type: "button" }, "Change");
-      change.addEventListener("click", () => {
-        current.hidden = true;
-        search.hidden = false;
-        input.focus();
-      });
       const current = el("div", { class: "picker-current" },
-        el("span", { class: "picker-current-label" }, `Selected: ${p.label} (CPT ${p.cpt})`),
-        change,
-      );
+        el("span", { class: "picker-current-label" }, `Selected: ${selProc.label} (CPT ${selProc.cpt})`), change);
+      change.addEventListener("click", () => { current.hidden = true; openSearch(); });
       picker.appendChild(current);
       picker.appendChild(search);
     } else {
+      if (useBreadth) B.ensureProcedureIndex().then(renderCold);
+      renderCold();
       picker.appendChild(search);
     }
     return picker;
@@ -409,23 +415,12 @@
              MT: "Montana", SD: "South Dakota", ID: "Idaho" }[code] || code;
   }
 
-  // Resolve a Shop CPT to a renderable record: a curated procedure from data.json,
-  // or a breadth code adapted from its lazy-loaded shard (fetched on demand, with a
-  // re-render when it arrives). Status: "ok" | "loading" | "error" | "none".
+  // Resolve a Shop CPT to a renderable record via the shared breadth resolver
+  // (curated from data.json, or a lazy-loaded breadth shard). Status: ok|loading|error|none.
   function resolveShopProc(cpt) {
+    if (window.STBBreadth) return window.STBBreadth.resolveRecord(cpt, DOC, STB.rerender);
     if (!cpt) return { status: "none" };
-    if (DOC.procedures[cpt]) return { status: "ok", p: DOC.procedures[cpt] };
-    const B = window.STBBreadth;
-    if (!B) return { status: "none" };
-    const shard = B.cachedShard(cpt);            // undefined=never, null=failed, object=ok
-    if (shard === undefined) {
-      B.getShard(cpt).then(() => STB.rerender(), () => STB.rerender());
-      return { status: "loading" };
-    }
-    if (shard === null) return { status: "error" };
-    const hidx = B.hospitalIndex();
-    if (!hidx) { B.ensureHospitalIndex().then(() => STB.rerender()); return { status: "loading" }; }
-    return { status: "ok", p: B.breadthRecord(shard, hidx) };
+    return DOC.procedures[cpt] ? { status: "ok", p: DOC.procedures[cpt] } : { status: "none" };
   }
 
   // Inline honesty chips for a breadth listing (null for a curated procedure).

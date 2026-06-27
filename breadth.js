@@ -107,11 +107,14 @@
   // ---- Browser runtime: lazy fetch + cache of the indexes and per-code shards.
   // Not exercised in the browser by node tests except via a stubbed global fetch.
   var _hindex = null, _hindexPromise = null;
+  var _procIndex = null, _procIndexPromise = null;
   var _matcher = null, _searchPromise = null;
   var _shardCache = {}, _shardPending = {};
 
   function __resetCaches() {
-    _hindex = null; _hindexPromise = null; _matcher = null; _searchPromise = null;
+    _hindex = null; _hindexPromise = null;
+    _procIndex = null; _procIndexPromise = null;
+    _matcher = null; _searchPromise = null;
     _shardCache = {}; _shardPending = {};
   }
 
@@ -131,11 +134,20 @@
   }
   function hospitalIndex() { return _hindex; }
 
+  function ensureProcedureIndex() {
+    if (_procIndex) return Promise.resolve(_procIndex);
+    if (!_procIndexPromise) {
+      _procIndexPromise = _json("procedure-index.json").then(function (doc) { _procIndex = doc; return doc; });
+    }
+    return _procIndexPromise;
+  }
+  function procedureIndex() { return _procIndex; }
+
   function ensureSearch() {
     if (_matcher) return Promise.resolve(_matcher);
     if (!_searchPromise) {
       _searchPromise = Promise.all([
-        _json("procedure-index.json"), _json("search-index.json"), ensureHospitalIndex(),
+        ensureProcedureIndex(), _json("search-index.json"), ensureHospitalIndex(),
       ]).then(function (parts) { _matcher = buildSearch(parts[0], parts[1]); return _matcher; });
     }
     return _searchPromise;
@@ -157,6 +169,21 @@
     return Object.prototype.hasOwnProperty.call(_shardCache, cpt) ? _shardCache[cpt] : undefined;
   }
 
+  // Resolve a CPT to a renderable procedure record: the curated record from
+  // data.json, else a breadth record adapted from its lazy-loaded shard. Reads the
+  // caches synchronously; kicks off a load (calling onLoad on completion) when the
+  // shard or hospital index isn't ready. Status: ok | loading | error | none.
+  function resolveRecord(cpt, doc, onLoad) {
+    if (!cpt) return { status: "none" };
+    if (doc && doc.procedures && doc.procedures[cpt]) return { status: "ok", p: doc.procedures[cpt] };
+    var shard = cachedShard(cpt);            // undefined=never, null=failed, object=ok
+    if (shard === undefined) { getShard(cpt).then(onLoad, onLoad); return { status: "loading" }; }
+    if (shard === null) return { status: "error" };
+    var hidx = hospitalIndex();
+    if (!hidx) { ensureHospitalIndex().then(onLoad, onLoad); return { status: "loading" }; }
+    return { status: "ok", p: breadthRecord(shard, hidx) };
+  }
+
   var API = {
     breadthRecord: breadthRecord,
     isBreadthOnly: isBreadthOnly,
@@ -164,6 +191,9 @@
     buildSearch: buildSearch,
     ensureHospitalIndex: ensureHospitalIndex,
     hospitalIndex: hospitalIndex,
+    ensureProcedureIndex: ensureProcedureIndex,
+    procedureIndex: procedureIndex,
+    resolveRecord: resolveRecord,
     ensureSearch: ensureSearch,
     searchReady: searchReady,
     match: match,

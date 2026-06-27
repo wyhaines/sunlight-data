@@ -10,6 +10,7 @@
   let pickerHost = null;     // stable wrapper the picker re-renders into
   let hospSelect = null;
   let refreshHospitals = null;
+  let stepHost = null;       // the 3-step progress indicator, updated by setStep()
 
   // Activate the bill view: build it once into #bill-view, then on every entry
   // update the route's cpt as the selected procedure. Idempotent w.r.t. user
@@ -18,11 +19,21 @@
     if (!window.STB.doc) return;
     if (!built) { build(state); built = true; return; }
     const cpt = state && state.cpt;
-    if (cpt && window.STB.doc.procedures[cpt] && cpt !== currentCpt) {
+    if (cpt && cpt !== currentCpt) {
       currentCpt = cpt;
       renderPicker();
       if (refreshHospitals) refreshHospitals();
     }
+  }
+
+  // Resolve the selected/entered CPT to a renderable record (curated from
+  // data.json or a lazy-loaded breadth shard) via the shared resolver. onLoad is
+  // re-invoked when a breadth shard finishes loading. Status: ok|loading|error|none.
+  function resolveProc(cpt, onLoad) {
+    if (window.STBBreadth) return window.STBBreadth.resolveRecord(cpt, window.STB.doc, onLoad || function () {});
+    if (!cpt) return { status: "none" };
+    const d = window.STB.doc;
+    return d.procedures[cpt] ? { status: "ok", p: d.procedures[cpt] } : { status: "none" };
   }
 
   let renderPicker = null;   // assigned in build(); re-renders the picker in place
@@ -33,12 +44,13 @@
     const doc = window.STB.doc;
 
     // Initial procedure: the route's cpt if valid, else the default.
-    const initial = (state && state.cpt && doc.procedures[state.cpt]) ? state.cpt : window.STB.cpt;
-    currentCpt = doc.procedures[initial] ? initial : null;
+    const initial = (state && state.cpt) ? state.cpt : window.STB.cpt;
+    currentCpt = initial || null;
 
     hospSelect = el("select", { id: "chk-hosp" });
     function fillHospitals() {
-      const p = currentCpt ? doc.procedures[currentCpt] : null;
+      const res = resolveProc(currentCpt, fillHospitals);
+      const p = res.status === "ok" ? res.p : null;
       if (!p) { hospSelect.replaceChildren(); return; }
       hospSelect.replaceChildren(
         ...p.hospitals.map((h) => el("option", { value: h.key }, h.name)),
@@ -56,10 +68,10 @@
       }));
     };
     function selectProc(cpt) {
-      if (!doc.procedures[cpt]) return;
+      if (resolveProc(cpt, () => { renderPicker(); fillHospitals(); }).status === "none") return;
       currentCpt = cpt;
       renderPicker();
-      fillHospitals();           // preserves hospSelect default; amounts/verdict untouched
+      fillHospitals();           // breadth: fills empty now, re-fills via onLoad when the shard lands
       Router.go({ mode: "bill", cpt });   // bookmarkable; re-fires stb:bill-mode (activate is idempotent)
     }
     renderPicker();
@@ -82,7 +94,16 @@
         verdict.replaceChildren(el("p", { class: "warn" }, "Enter the dollar amount you were charged."));
         return;
       }
-      renderVerdict(verdict, doc.procedures[currentCpt], hospSelect.value, charged, quoted);
+      function runVerdict() {
+        const res = resolveProc(currentCpt, runVerdict);
+        if (res.status !== "ok") {
+          verdict.replaceChildren(el("p", { class: res.status === "error" ? "warn" : "dim" },
+            res.status === "loading" ? "Loading this procedure…" : "Pick the procedure you think it was."));
+          return;
+        }
+        renderVerdict(verdict, res.p, hospSelect.value, charged, quoted);
+      }
+      runVerdict();
       // Gate-1 usage signal: count that A verdict was rendered — no amount, no
       // hospital, no PII; just the event (spec §5). No-op until GoatCounter exists.
       if (window.goatcounter && window.goatcounter.count) {
@@ -90,6 +111,7 @@
       }
     });
 
+    stepHost = el("div", { class: "chk-stepper-host" }, stepper(1));
     container.replaceChildren(el("div", { class: "checker" },
       el("h3", null, "Check a bill you received"),
       el("p", { class: "dim" },
@@ -97,6 +119,7 @@
         "(and what you were quoted, if you have it). We compare it to that hospital's own published " +
         "prices and what Medicare pays — and if the charge is far above the procedure alone, we help you " +
         "find the extra codes hiding on your bill."),
+      stepHost,
       el("div", { class: "chk-form" },
         el("div", { class: "chk-field chk-field-proc" }, el("span", { class: "chk-field-label" }, "Procedure"), pickerHost),
         el("label", null, "Hospital ", hospSelect),
@@ -109,6 +132,14 @@
       verdict,
     ));
   }
+
+  // Progress indicator across the three steps; setStep re-renders it in place.
+  function stepper(active) {
+    const steps = [[1, "What you were billed"], [2, "The gut-check"], [3, "Break it down"]];
+    return el("div", { class: "chk-stepper" }, ...steps.map(([n, label]) =>
+      el("span", { class: "chk-step" + (n === active ? " active" : (n < active ? " done" : "")) }, `${n} · ${label}`)));
+  }
+  function setStep(n) { if (stepHost) stepHost.replaceChildren(stepper(n)); }
 
   function refs(h, tier2) {
     // breadth-only Tier-1: no bottom-up, only ccr_check (may be null)
@@ -171,79 +202,99 @@
   }
 
   function renderVerdict(target, p, hospKey, charged, quoted) {
-    if (hospKey === "__other__") {
-      renderUnlisted(target, p, charged, quoted);
-      return;
-    }
+    if (hospKey === "__other__") { renderUnlisted(target, p, charged, quoted); return; }
+    setStep(2);
     const h = p.hospitals.find((x) => x.key === hospKey);
     const tier2 = p.tier === 2;
     const r = refs(h, tier2);
     const { breadthImaging } = r;
     const band = classify(charged, r);
+    const basePosted = basePostedPrice(r);
+    const mult = (basePosted != null && basePosted > 0) ? charged / basePosted : null;
 
-    const medLabel = el("span", null, G().term("medicare_reference", "Medicare reference"),
-      tier2 ? el("span", null, " (", G().term(G().basisTermKey(h.medicare_reference.basis), medicareShort(h.medicare_reference.basis)), ")") : "");
-    let rows;
-    if (tier2) {
-      rows = [
-        [el("span", null, "Posted ", G().term("chargemaster", "list price")), r.gross, h.provenance.prices],
-        [el("span", null, "Posted ", G().term("cash_price", "cash (self-pay) price")), r.cash, h.provenance.prices],
-        [medLabel, r.medicare, h.provenance.medicare],
-      ];
-    } else if (breadthImaging) {
-      rows = [
-        [el("span", null, "Posted ", G().term("chargemaster", "list price")), r.gross, h.provenance.prices],
-        [el("span", null, "Posted ", G().term("cash_price", "cash (self-pay) price")), r.cash, h.provenance.prices],
-      ];
-      if (r.costLow != null) {
-        rows.push([el("span", null, G().term("bottom_up", "Estimated cost to deliver"), " (", G().term("ccr", "CCR"), " × list price)"),
-          r.costLow, h.provenance.ccr]);
-      }
-      rows.push([medLabel, r.medicare, h.provenance.medicare]);
-    } else {
-      rows = [
-        [el("span", null, "Posted ", G().term("chargemaster", "list price")), r.gross, h.provenance.prices],
-        [el("span", null, "Posted ", G().term("cash_price", "cash (self-pay) price")), r.cash, h.provenance.prices],
-        [el("span", null, G().term("bottom_up", "Estimated cost to deliver"), " (two methods)"),
-          null, h.provenance.bottom_up,
-          r.costLow != null ? `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}` : "-"],
-        [medLabel, r.medicare, h.provenance.medicare],
-      ];
-    }
-
-    // Gap analysis: a charge clearly above the whole chargemaster price for this
-    // one code almost always means a second code was billed alongside it.
+    // Step 3 is built lazily and revealed by the CTA (prominent when a far-above
+    // charge implies a second billed code).
     const grossOrCash = r.gross != null ? r.gross : r.cash;
     const culprit = (charged != null && grossOrCash != null && charged > grossOrCash * 1.25);
+    const step3 = el("div", { class: "chk-step3", hidden: "" });
+    const reveal = el("button", { class: "chk-reveal", type: "button" },
+      culprit ? "→ Break down your itemized bill" : "Break it down line by line");
+    let built3 = false;
+    reveal.addEventListener("click", () => {
+      if (!built3) {
+        step3.replaceChildren(...[
+          culprit ? culpritFlag(p, charged, grossOrCash, hospKey) : null,
+          itemizedSection(p, hospKey, charged, quoted),
+          guidance(),
+        ].filter(Boolean));
+        built3 = true;
+      }
+      const show = step3.hidden;
+      step3.hidden = !show;
+      reveal.textContent = show ? "Hide the breakdown"
+        : (culprit ? "→ Break down your itemized bill" : "Break it down line by line");
+      setStep(show ? 3 : 2);
+    });
 
-    target.replaceChildren(...[
-      // Quoted-vs-charged framing (the real-world "I was told one number, billed another").
-      (quoted > 0 && charged > quoted * 1.1)
-        ? el("p", { class: "chk-quoted-line" },
-            `You were quoted ${fmtUSD(quoted)} but charged ${fmtUSD(charged)} — a `,
-            el("strong", null, fmtUSD(charged - quoted)),
-            " difference.")
-        : null,
-      el("p", { class: "chk-verdict-line" },
-        el("strong", null, fmtUSD(charged)),
-        ` ${verdictCopy(band, p, breadthImaging)}`),
-      tier2 ? el("p", { class: "micro dim" },
-        r.medicare == null
-          ? "Medicare publishes no comparable facility rate for this code; compared against posted prices only."
-          : `Tier 2: compared against posted prices and Medicare's ${medicareShort(h.medicare_reference.basis)} rate only — no cost-to-deliver estimate.`) : null,
-      ...rows.map(([label, val, source, custom]) =>
-        el("div", { class: "detail-row" },
-          el("div", { class: "detail-label" }, label),
-          el("div", { class: "detail-amount" }, custom != null ? custom : fmtUSD(val)),
-          el("div", { class: "detail-source dim micro" }, source),
-        )),
-      culprit ? culpritFlag(p, charged, grossOrCash, hospKey) : null,
-      itemizedSection(p, hospKey, charged, quoted),
-      guidance(),
+    target.replaceChildren(
+      verdictCard(p, h, r, charged, quoted, band, breadthImaging, mult),
+      el("div", { class: "chk-reveal-wrap" + (culprit ? " culprit" : "") },
+        culprit ? el("p", { class: "chk-reveal-lead" },
+          "A charge this far above one code's price usually means extra codes were billed alongside it.") : null,
+        reveal),
+      step3,
       el("p", { class: "micro dim" },
         "These are estimates from public data, compared for context — not a determination that any " +
         "bill is correct or incorrect, and not medical, legal, or financial advice."),
-    ].filter((c) => c != null));
+    );
+  }
+
+  // Step-2 gut-check card: charge + magnitude + posted/Medicare comparison + bar.
+  function verdictCard(p, h, r, charged, quoted, band, breadthImaging, mult) {
+    const compareRef = r.cash != null ? "posted cash price" : (r.gross != null ? "posted list price" : "Medicare rate");
+    const medBasis = h.medicare_reference.basis;
+    const medLabel = el("span", null, G().term("medicare_reference", "Medicare"),
+      medBasis && medBasis !== "unavailable" ? el("span", { class: "dim" }, ` (${medicareShort(medBasis)})`) : "");
+    const comp = el("div", { class: "chk-card-compare" }, ...[
+      el("div", { class: "chk-card-cmp-row" }, el("span", { class: "dim" }, "Posted cash (self-pay)"), el("span", null, fmtUSD(r.cash))),
+      el("div", { class: "chk-card-cmp-row" }, el("span", { class: "dim" }, "Posted list (chargemaster)"), el("span", null, fmtUSD(r.gross))),
+      r.costLow != null ? el("div", { class: "chk-card-cmp-row" }, el("span", { class: "dim" }, "Est. cost to deliver"),
+        el("span", null, `${fmtUSD(r.costLow)} – ${fmtUSD(r.costHigh)}`)) : null,
+      el("div", { class: "chk-card-cmp-row" }, el("span", { class: "dim" }, medLabel), el("span", null, fmtUSD(r.medicare))),
+    ].filter(Boolean));
+
+    return el("div", { class: "chk-card band-" + band },
+      (quoted > 0 && charged > quoted * 1.1)
+        ? el("p", { class: "chk-quoted-line" },
+            `You were quoted ${fmtUSD(quoted)} but charged ${fmtUSD(charged)} — a `,
+            el("strong", null, fmtUSD(charged - quoted)), " difference.")
+        : null,
+      el("div", { class: "chk-card-label dim" }, "You were charged"),
+      el("div", { class: "chk-card-amount" }, fmtUSD(charged)),
+      el("p", { class: "chk-card-verdict" }, "This ", verdictCopy(band, p, breadthImaging)),
+      mult != null && mult >= 1.1 ? el("p", { class: "chk-card-mult dim" }, `That's about ${mult.toFixed(1)}× the ${compareRef}.`) : null,
+      comp,
+      magnitudeBar(r, charged),
+      (p.tier === 2 || p.breadth) ? el("p", { class: "micro dim" },
+        r.medicare == null
+          ? "Medicare publishes no comparable facility rate for this code; compared against posted prices only."
+          : `Compared against posted prices and Medicare's ${medicareShort(medBasis)} rate only — no cost-to-deliver estimate.`) : null,
+    );
+  }
+
+  // Medicare → posted → charge scale, normalized to the largest value (the charge).
+  function magnitudeBar(r, charged) {
+    const stops = [];
+    if (r.medicare != null) stops.push({ v: r.medicare, cls: "mb-medicare", label: "Medicare" });
+    const posted = r.cash != null ? r.cash : r.gross;
+    if (posted != null) stops.push({ v: posted, cls: "mb-posted", label: "posted" });
+    stops.push({ v: charged, cls: "mb-charge", label: "your charge" });
+    const max = Math.max(...stops.map((s) => s.v)) || 1;
+    return el("div", { class: "chk-bar" },
+      el("div", { class: "chk-bar-track" }, ...stops.map((s) =>
+        el("span", { class: "chk-bar-mark " + s.cls, style: `left:${Math.min(100, Math.round(100 * s.v / max))}%`,
+          title: `${s.label}: ${fmtUSD(s.v)}` }))),
+      el("div", { class: "chk-bar-legend dim micro" }, "Medicare → posted → your charge"));
   }
 
   // Layer-2 culprit flag. Phase 3 names the specific likely add-on from the
@@ -363,12 +414,17 @@
         verdict.appendChild(el("span", { class: "dim" }, "Enter a CPT code."));
         return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null), verdict);
       }
-      const proc = doc.procedures[cpt];
-      if (!proc) {
+      const res = resolveProc(cpt, renderResults);
+      if (res.status === "loading") {
+        verdict.appendChild(el("span", { class: "dim" }, `Looking up CPT ${cpt}…`));
+        return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null), verdict);
+      }
+      if (res.status !== "ok") {
         verdict.appendChild(el("span", { class: "dim" },
           "We don't have a benchmark for this code (it's not in our dataset) — still worth questioning on your itemized bill."));
         return el("div", { class: cls.join(" ") }, lineHead(cpt, charge, isBase, null), verdict);
       }
+      const proc = res.p;
       if (hospKey === "__other__") {
         // No specific hospital — give the regional cash range + national Medicare
         // we do have, rather than implying any one hospital's price.
@@ -473,7 +529,8 @@
     function letterLine(ln, isBase) {
       const cpt = (ln.cpt || "").trim();
       const charge = parseFloat(ln.charge);
-      const proc = doc.procedures[cpt];
+      const res = resolveProc(cpt, () => {});
+      const proc = res.status === "ok" ? res.p : null;
       let label = null, postedCash = null, postedGross = null, medicare = null;
       if (proc) {
         label = proc.label;
@@ -626,16 +683,28 @@
     }
   }
 
+  const REGION_LABEL = { dfw: "Dallas–Fort Worth, TX", wyoming: "Wyoming", ne_panhandle: "Nebraska Panhandle" };
+  function regionLabel(key) { return REGION_LABEL[key] || key; }
+
+  // Dataset size, derived from the data so the copy can never go stale again.
+  function datasetScale() {
+    const doc = window.STB.doc;
+    const keys = new Set();
+    Object.values(doc.procedures).forEach((p) => (p.hospitals || []).forEach((h) => keys.add(h.key)));
+    return { hospitals: keys.size, regions: (doc.regions || []).length };
+  }
+
   function renderUnlisted(target, p, charged, quoted) {
-    const regionRows = Object.entries(p.regional).map(([key, r]) =>
+    setStep(2);
+    const scale = datasetScale();
+    const breadth = p.breadth === true;
+    const regionRows = !breadth ? Object.entries(p.regional || {}).map(([key, r]) =>
       el("div", { class: "detail-row" },
-        el("div", { class: "detail-label" }, key === "dfw" ? "Dallas–Fort Worth cash range" : "SE WY / NE Panhandle cash range"),
+        el("div", { class: "detail-label" }, `${regionLabel(key)} cash range`),
         el("div", { class: "detail-amount" }, `${fmtUSD(r.cash_min)} – ${fmtUSD(r.cash_max)} (median ${fmtUSD(r.cash_median)})`),
-        el("div", { class: "detail-source dim micro" }, "Hospital MRFs, 10 facilities"),
-      ));
-    // Use the regional cash median as the base reference for the gap heuristic
-    // when the hospital itself isn't in our set.
-    const medians = Object.values(p.regional).map((r) => r.cash_median).filter((v) => v != null);
+        el("div", { class: "detail-source dim micro" }, "Hospital price files"),
+      )) : [];
+    const medians = !breadth ? Object.values(p.regional || {}).map((r) => r.cash_median).filter((v) => v != null) : [];
     const basePosted = medians.length ? Math.min(...medians) : null;
     const culprit = (basePosted != null && charged > basePosted * 1.25);
 
@@ -643,19 +712,25 @@
       (quoted > 0 && charged > quoted * 1.1)
         ? el("p", { class: "chk-quoted-line" },
             `You were quoted ${fmtUSD(quoted)} but charged ${fmtUSD(charged)} — a `,
-            el("strong", null, fmtUSD(charged - quoted)),
-            " difference.")
+            el("strong", null, fmtUSD(charged - quoted)), " difference.")
         : null,
       el("p", { class: "chk-verdict-line" },
         el("strong", null, fmtUSD(charged)),
-        " — your hospital isn't in our 10-facility dataset, so here is the context we can offer:"),
+        ` — your hospital isn't among the ${scale.hospitals} hospitals we cover, so here is the context we can offer:`),
       ...regionRows,
-      p.medicare_national_usd != null
-        ? el("div", { class: "detail-row" },
-            el("div", { class: "detail-label" }, "Medicare national rate (unadjusted)"),
-            el("div", { class: "detail-amount" }, fmtUSD(p.medicare_national_usd)),
-            el("div", { class: "detail-source dim micro" }, p.tier === 2 ? "CY2026 Medicare " + medicareShort(window.STB.tier2Basis(p)) : "CY2026 OPPS Addendum B"))
-        : el("p", { class: "dim micro" }, "Medicare reference unavailable for this code."),
+      breadth
+        ? (p.medicare_national_usd != null
+            ? el("p", { class: "dim" },
+                `We have posted prices for this code from other hospitals in our set, but not yours. ` +
+                `Medicare's national rate is ${fmtUSD(p.medicare_national_usd)}.`)
+            : el("p", { class: "dim micro" },
+                "We have posted prices for this code from other hospitals, but not yours, and Medicare publishes no comparable facility rate for it."))
+        : (p.medicare_national_usd != null
+            ? el("div", { class: "detail-row" },
+                el("div", { class: "detail-label" }, "Medicare national rate (unadjusted)"),
+                el("div", { class: "detail-amount" }, fmtUSD(p.medicare_national_usd)),
+                el("div", { class: "detail-source dim micro" }, p.tier === 2 ? "CY2026 Medicare " + medicareShort(window.STB.tier2Basis(p)) : "CY2026 OPPS Addendum B"))
+            : el("p", { class: "dim micro" }, "Medicare reference unavailable for this code.")),
       culprit ? el("div", { class: "chk-culprit" },
         el("p", null,
           `Your charge of `, el("strong", null, fmtUSD(charged)),
@@ -671,8 +746,7 @@
       itemizedSection(p, "__other__", charged, quoted),
       guidance(),
       el("p", { class: "micro dim" },
-        "Our data covers 10 hospitals in two regions. Prices elsewhere vary, but the same public files " +
-        "exist for every US hospital — that's the point."),
+        `Our data covers ${scale.hospitals} hospitals across ${scale.regions} regions. Prices elsewhere vary, but the same public files exist for every US hospital — that's the point.`),
     ].filter((c) => c != null));
   }
 
